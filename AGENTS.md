@@ -15,6 +15,8 @@ key. Private release keys remain in OpenBao Transit.
 Run `scripts/check.sh` for the complete local gate: shell syntax, generated
 installer parity, offline updater/installer/interface/configuration tests, and
 real tmux runtime tests. Test artifacts live in the physical scratch directory.
+When run as root in CI, the gate runs the tmux runtime tests as `nobody` using
+`runuser` and a disposable directory under `/tmp`.
 `python3 scripts/release.py check` additionally authenticates a prepared release.
 
 Publish through declarative-config's protected `harness-start-release-sign`

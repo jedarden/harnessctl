@@ -15,5 +15,16 @@ bash tests/release-test.sh
 if [[ -n "${BOOTSTRAP_SOURCE:-}" ]]; then
     bash tests/bootstrap-adoption-test.sh
 fi
-bash tests/start-sh-runtime-test.sh
+if (( EUID == 0 )); then
+    # The runtime gate verifies agent execution without root privileges.
+    runtime_tmp=$(mktemp -d /tmp/harness-start-runtime.XXXXXX)
+    trap 'rm -rf "$runtime_tmp"' EXIT
+    chmod 1777 "$runtime_tmp"
+    mkdir "$runtime_tmp/tests"
+    cp start.sh "$runtime_tmp/start.sh"
+    cp tests/start-sh-runtime-test.sh "$runtime_tmp/tests/"
+    runuser -u nobody -- env TMPDIR="$runtime_tmp" bash "$runtime_tmp/tests/start-sh-runtime-test.sh"
+else
+    bash tests/start-sh-runtime-test.sh
+fi
 echo 'Complete harness-start local gate passed.'

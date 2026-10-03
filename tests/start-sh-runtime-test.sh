@@ -57,7 +57,7 @@ setup_case() {
     # still gets the ordinary utilities it needs through explicit symlinks.
     local tool
     for tool in bash env sh readlink dirname mktemp grep sort head mkdir ln \
-        tmux sudo id sleep script cat; do
+        tmux id sleep script cat; do
         ln -s "$(command -v "$tool")" "$CASE_TOOL_BIN/$tool"
     done
     PATH_VALUE="$CASE_HOME/.local/bin:$CASE_BIN:$CASE_TOOL_BIN"
