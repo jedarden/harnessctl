@@ -61,6 +61,9 @@ setup_case() {
         ln -s "$(command -v "$tool")" "$CASE_TOOL_BIN/$tool"
     done
     PATH_VALUE="$CASE_HOME/.local/bin:$CASE_BIN:$CASE_TOOL_BIN"
+    # tmux starts a login shell; Debian's /etc/profile resets PATH. Restore
+    # this fixture's tools after system profiles, as a user's profile would.
+    printf 'export PATH=%q\n' "$PATH_VALUE" > "$CASE_HOME/.bash_profile"
 
     cp "$START_SH" "$CASE_HOME/start.sh"
     chmod +x "$CASE_HOME/start.sh"
@@ -140,6 +143,9 @@ run_tmux_case() {
     (
         export HOME="$CASE_HOME" PATH="$PATH_VALUE" TMUX_TMPDIR="$CASE_TMUX_TMPDIR"
         export TERM=xterm-256color
+        # Service accounts in CI commonly have /usr/sbin/nologin in passwd.
+        # Give tmux a real shell for this disposable interactive session.
+        export SHELL="$CASE_TOOL_BIN/bash"
         unset TMUX TMUX_PANE HERDR_ENV START_SH_AGENT
         hash -r
         # tmux attach-session requires a controlling terminal. `script`
