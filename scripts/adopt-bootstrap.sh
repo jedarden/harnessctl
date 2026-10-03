@@ -29,4 +29,4 @@ PY
 # Keeping REPO_URL at bootstrap's old location preserves its independent key,
 # archive, and SSH-key distribution. Only the launcher's updater migrates.
 "$bootstrap/scripts/start-sh-release.sh" prepare-unsigned "$version"
-echo "Prepared bootstrap $version with a signed-source harness-start bridge."
+echo "Prepared bootstrap $version with a signed-source harnessctl bridge."

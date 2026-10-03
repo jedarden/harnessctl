@@ -17,7 +17,7 @@ if [[ -n "${BOOTSTRAP_SOURCE:-}" ]]; then
 fi
 if (( EUID == 0 )); then
     # The runtime gate verifies agent execution without root privileges.
-    runtime_tmp=$(mktemp -d /tmp/harness-start-runtime.XXXXXX)
+    runtime_tmp=$(mktemp -d /tmp/harnessctl-runtime.XXXXXX)
     trap 'rm -rf "$runtime_tmp"' EXIT
     chmod 1777 "$runtime_tmp"
     mkdir "$runtime_tmp/tests"
@@ -27,4 +27,4 @@ if (( EUID == 0 )); then
 else
     bash tests/start-sh-runtime-test.sh
 fi
-echo 'Complete harness-start local gate passed.'
+echo 'Complete harnessctl local gate passed.'

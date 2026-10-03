@@ -19,7 +19,7 @@ while [[ $# -gt 0 ]]; do
             esac
             shift 2
             ;;
-        --version) echo "harness-start installer v$START_SH_VERSION"; exit 0 ;;
+        --version) echo "harnessctl installer v$START_SH_VERSION"; exit 0 ;;
         --help|-h)
             echo 'Usage: bash install.sh [--script-path PATH] [--bin-dir DIR] [--source RELEASE-URL]'
             exit 0

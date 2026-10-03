@@ -32,7 +32,7 @@ host = Path(sys.argv[1]) / 'hosts/ex44'
 launcher = (host / 'start.sh').read_text()
 bootstrap = (host / 'bootstrap.sh').read_text()
 old = 'https://raw.githubusercontent.com/jedarden/bootstrap/main/hosts/ex44'
-new = 'https://raw.githubusercontent.com/jedarden/harness-start/main'
+new = 'https://raw.githubusercontent.com/jedarden/harnessctl/main'
 assert re.search(r'^REPO_URL="([^"]+)"$', launcher, re.M).group(1) == old
 assert re.search(r'^REPO_URL="([^"]+)"$', bootstrap, re.M).group(1) == old
 assert f'UPDATE_REPO_URL="${{START_SH_UPDATE_URL:-{new}}}"' in launcher

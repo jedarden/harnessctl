@@ -21,6 +21,15 @@ trap 'rm -rf "$TMP"' EXIT
 python3 "$ROOT/tests/fixture.py" "$TMP/release"
 ROOT="$TMP/release"
 START_SH="$ROOT/start.sh"
+WRONG_FORMAT_MANIFEST="$TMP/wrong-format-manifest.txt"
+WRONG_FORMAT_SIGNATURE="$TMP/wrong-format-manifest.sig"
+sed 's/^format=.*/format=another-artifact-protocol-v1/' \
+    "$ROOT/artifact-manifest.txt" > "$WRONG_FORMAT_MANIFEST"
+printf '%s\n' 'key_id=fixture-test' > "$WRONG_FORMAT_SIGNATURE"
+printf 'signature=' >> "$WRONG_FORMAT_SIGNATURE"
+openssl dgst -sha256 -sign "$TMP/test-signing.pem" "$WRONG_FORMAT_MANIFEST" | \
+    base64 -w 0 >> "$WRONG_FORMAT_SIGNATURE"
+printf '\n' >> "$WRONG_FORMAT_SIGNATURE"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -93,6 +102,7 @@ setup_case() {
         '      version-unavailable) exit 22 ;;' \
         '      version-malformed) printf "%s\\n" "not-a-manifest" ;;' \
         '      manifest-tampered) sed "s/^version=.*/version=9.9.9/" "$FAKE_MANIFEST_FILE" ;;' \
+        '      signed-wrong-format) cat "$FAKE_WRONG_FORMAT_MANIFEST" ;;' \
         '      *) cat "$FAKE_MANIFEST_FILE" ;;' \
         '    esac' \
         '    ;;' \
@@ -100,6 +110,7 @@ setup_case() {
         '    case "$FAKE_CURL_MODE" in' \
         '      version-unavailable|version-malformed) exit 22 ;;' \
         '      manifest-tampered) cat "$FAKE_SIGNATURE_FILE" | sed "s/^signature=.*/signature=AAAA/" ;;' \
+        '      signed-wrong-format) cat "$FAKE_WRONG_FORMAT_SIGNATURE" ;;' \
         '      *) cat "$FAKE_SIGNATURE_FILE" ;;' \
         '    esac' \
         '    ;;' \
@@ -158,6 +169,8 @@ run_case() {
         FAKE_STALE_PAYLOAD_FILE="$STALE_PAYLOAD_FILE" \
         FAKE_MANIFEST_FILE="$ROOT/artifact-manifest.txt" \
         FAKE_SIGNATURE_FILE="$ROOT/artifact-manifest.sig" \
+        FAKE_WRONG_FORMAT_MANIFEST="$WRONG_FORMAT_MANIFEST" \
+        FAKE_WRONG_FORMAT_SIGNATURE="$WRONG_FORMAT_SIGNATURE" \
         FAKE_MV_LOG="$MV_LOG" \
         FAKE_MV_FAILURE=false \
         "$LAUNCHER" --agent claude 2>&1
@@ -240,6 +253,12 @@ assert_contains 'release manifest verification failed' "$CASE_OUTPUT" \
     'tampered release manifest was not rejected'
 assert_no_update_temps
 
+run_case signed-wrong-format signed-wrong-format
+assert_unchanged 'cross-protocol signed manifest damaged the launcher'
+assert_contains 'release manifest verification failed' "$CASE_OUTPUT" \
+    'cross-protocol signed manifest was not rejected'
+assert_no_update_temps
+
 echo 'Checking unavailable and syntax-invalid launcher payloads...'
 run_case payload-unavailable payload-unavailable
 assert_unchanged 'unavailable launcher payload damaged the launcher'
@@ -294,6 +313,8 @@ output=$(
     FAKE_STALE_PAYLOAD_FILE="$STALE_PAYLOAD_FILE" \
     FAKE_MANIFEST_FILE="$ROOT/artifact-manifest.txt" \
     FAKE_SIGNATURE_FILE="$ROOT/artifact-manifest.sig" \
+    FAKE_WRONG_FORMAT_MANIFEST="$WRONG_FORMAT_MANIFEST" \
+    FAKE_WRONG_FORMAT_SIGNATURE="$WRONG_FORMAT_SIGNATURE" \
     FAKE_MV_LOG="$MV_LOG" \
     FAKE_MV_FAILURE=true \
     "$LAUNCHER" --agent claude 2>&1

@@ -1,4 +1,4 @@
-# Harness Start
+# harnessctl
 
 `start.sh` is the canonical, self-contained Bash launcher. It is derived from
 bootstrap commit 32993be and supports Claude Code and Codex, tmux, and herdr.
@@ -19,7 +19,7 @@ When run as root in CI, the gate runs the tmux runtime tests as `nobody` using
 `runuser` and a disposable directory under `/tmp`.
 `python3 scripts/release.py check` additionally authenticates a prepared release.
 
-Publish through declarative-config's protected `harness-start-release-sign`
+Publish through declarative-config's protected `harnessctl-release-sign`
 WorkflowTemplate in iad-ci. No GitHub Actions, client-side mirror pushes, or
 direct managed-resource changes. Never change immutable release archives.
 Bootstrap adoption belongs to this application's owning bead and uses

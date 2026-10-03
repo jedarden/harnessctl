@@ -1,7 +1,8 @@
-# Harness Start implementation plan
+# harnessctl implementation plan
 
 Outcome owner: hstart-baef6ea7. Extract the existing launcher from bootstrap
-without losing signed updates, resume behavior, or the fleet's defaults.
+into harnessctl without losing signed updates, resume behavior, or the fleet's
+defaults.
 
 The distribution unit is one Bash launcher. Configuration belongs to the user;
 release metadata and the pinned public key belong to this repository. The

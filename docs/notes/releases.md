@@ -1,18 +1,18 @@
 # Release and bootstrap migration
 
-`harness-start-release-sign` lives at
-`declarative-config/k8s/iad-ci/argo-workflows/harness-start-release-sign-workflowtemplate.yml`.
+`harnessctl-release-sign` lives at
+`declarative-config/k8s/iad-ci/argo-workflows/harnessctl-release-sign-workflowtemplate.yml`.
 Submit it by reference with an exact Forgejo main commit and a forward version:
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
-  generateName: harness-start-release-sign-manual-
+  generateName: harnessctl-release-sign-manual-
   namespace: argo-workflows
 spec:
   workflowTemplateRef:
-    name: harness-start-release-sign
+    name: harnessctl-release-sign
   arguments:
     parameters:
       - name: expected-commit
@@ -29,12 +29,12 @@ Verify the release commit on Forgejo and GitHub and compare raw artifact bytes
 with the signed release before rolling it out.
 
 Bootstrap's old `hosts/ex44/start.sh` URL is retained as a transition source.
-`harness-start-bootstrap-adopt` takes `expected-commit` (bootstrap main),
+`harnessctl-bootstrap-adopt` takes `expected-commit` (bootstrap main),
 `launcher-commit` (the signed harness main), and `version` (next bootstrap
 version). It verifies the harness release before copying its launcher and
 prepares, signs, verifies, and pushes a normal bootstrap release. The embedded
 bridge preserves bootstrap's REPO_URL while directing launcher checks to
-harness-start. Existing installations fetch the bridge with their existing
+harnessctl. Existing installations fetch the bridge with their existing
 trust anchor and then self-update independently. Fresh bootstrap installations
 receive the same bridge. No host-local source patch is required.
 

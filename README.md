@@ -1,11 +1,13 @@
-# Harness Start
+# harnessctl
 
 A self-updating `start` command for Claude Code and Codex. It creates a named
 tmux session from a bare shell and runs directly inside an existing tmux or
 herdr pane. Resume a coding session without remembering each agent's syntax.
+The repository is named `harnessctl`; the installed command remains `start`
+for bootstrap compatibility and operator muscle memory.
 
-Source of truth: [Forgejo](https://git.ardenone.com/jedarden/harness-start).
-[GitHub](https://github.com/jedarden/harness-start) is a read-only release mirror.
+Source of truth: [Forgejo](https://git.ardenone.com/jedarden/harnessctl).
+[GitHub](https://github.com/jedarden/harnessctl) is a read-only release mirror.
 
 ## Install
 
@@ -16,10 +18,10 @@ already-installed agents can run with `--no-agent-update`.
 Download the installer from a pinned release and run it:
 
 ```bash
-curl -fsSLo /tmp/harness-start-install.sh \
-  https://raw.githubusercontent.com/jedarden/harness-start/main/releases/v1.4.0/install.sh
-bash /tmp/harness-start-install.sh --source \
-  https://raw.githubusercontent.com/jedarden/harness-start/main/releases/v1.4.0
+curl -fsSLo /tmp/harnessctl-install.sh \
+  https://raw.githubusercontent.com/jedarden/harnessctl/main/releases/v1.4.0/install.sh
+bash /tmp/harnessctl-install.sh --source \
+  https://raw.githubusercontent.com/jedarden/harnessctl/main/releases/v1.4.0
 ```
 
 The installer authenticates the release manifest using its embedded public key,
@@ -49,7 +51,7 @@ The updater refuses to replace tracked source files.
 
 ## Configure
 
-Export variables or put them in `~/.config/harness-start/config.sh`:
+Export variables or put them in `~/.config/harnessctl/config.sh`:
 
 ```bash
 START_SH_AGENT=codex
@@ -80,7 +82,7 @@ The complete local gate covers signed update failures, atomic replacement,
 installation, explicit updates, CLI dispatch, configuration, and real tmux
 runtime. It uses disposable signed fixtures and does not contact a live signer.
 
-Publish with the protected `harness-start-release-sign` WorkflowTemplate in
+Publish with the protected `harnessctl-release-sign` WorkflowTemplate in
 iad-ci using `expected-commit=<exact Forgejo main SHA>` and a forward semantic
 `version`. It prepares, Transit-signs, verifies, archives, commits, and pushes
 only to Forgejo. The server-side mirror publishes the same commit on GitHub.

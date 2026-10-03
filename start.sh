@@ -13,12 +13,12 @@
 # into every pane herdr spawns) or an existing tmux client ($TMUX) - it skips
 # tmux entirely and execs the agent in the current pane instead of nesting.
 #
-# Canonical source: git.ardenone.com/jedarden/harness-start.
+# Canonical source: git.ardenone.com/jedarden/harnessctl.
 # Releases are signed by OpenBao Transit and distributed through the read-only
 # GitHub mirror. Install a deployed copy with install.sh; update it with
 # `start update`. Bootstrap's launcher is a compatibility snapshot.
 START_SH_VERSION="1.3.2"
-REPO_URL="https://raw.githubusercontent.com/jedarden/harness-start/main"
+REPO_URL="https://raw.githubusercontent.com/jedarden/harnessctl/main"
 ARTIFACT_MANIFEST_FILE="artifact-manifest.txt"
 ARTIFACT_SIGNATURE_FILE="artifact-manifest.sig"
 ARTIFACT_TRUSTED_KEY_ID="bootstrap-rsa-2026-10"
@@ -41,7 +41,7 @@ ARTIFACT_TRUSTED_PUBLIC_KEYS=("$ARTIFACT_TRUSTED_PUBLIC_KEY")
 
 # Only the user's own configuration is sourced. Values can also be exported
 # directly by the calling shell. The default preserves the fleet's behavior.
-START_SH_CONFIG="${START_SH_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/harness-start/config.sh}"
+START_SH_CONFIG="${START_SH_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/harnessctl/config.sh}"
 [[ ! -f "$START_SH_CONFIG" ]] || source "$START_SH_CONFIG"
 UPDATE_REPO_URL="${START_SH_UPDATE_URL:-$REPO_URL}"
 
@@ -214,6 +214,7 @@ verify_artifact_manifest() {
     printf '%s' "$signature_value" | base64 --decode > "$directory/signature.bin" 2>/dev/null || return 1
     openssl dgst -sha256 -verify "$public_key" -signature "$directory/signature.bin" "$manifest" >/dev/null 2>&1 || return 1
 
+    [[ "$(sed -n 's/^format=//p' "$manifest")" == "harnessctl-artifacts-v1" ]] || return 1
     mapfile -t manifest_versions < <(grep -E '^version=[0-9]+\.[0-9]+\.[0-9]+$' "$manifest" || true)
     [[ ${#manifest_versions[@]} -eq 1 ]] || return 1
     manifest_version=${manifest_versions[0]#version=}

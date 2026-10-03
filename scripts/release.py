@@ -56,7 +56,7 @@ def parity(root=ROOT):
 
 def manifest(root=ROOT):
     _, version, key_id, _ = metadata(root)
-    lines = ["format=harness-start-artifacts-v1", f"key_id={key_id}", f"version={version}"]
+    lines = ["format=harnessctl-artifacts-v1", f"key_id={key_id}", f"version={version}"]
     for name in ARTIFACTS:
         lines.append(f"artifact={name} {hashlib.sha256((root / name).read_bytes()).hexdigest()}")
     return "\n".join(lines) + "\n"
@@ -76,7 +76,7 @@ def prepare(version, root=ROOT):
     parity(root)
     (root / "artifact-manifest.txt").write_text(manifest(root))
     (root / "artifact-manifest.sig").unlink(missing_ok=True)
-    print(f"Prepared unsigned harness-start v{version}; sign before publishing")
+    print(f"Prepared unsigned harnessctl v{version}; sign before publishing")
 
 
 def verify(root=ROOT):
@@ -126,7 +126,7 @@ def archive(root=ROOT):
     destination.mkdir(parents=True)
     for name in (*ARTIFACTS, "artifact-manifest.txt", "artifact-manifest.sig"):
         shutil.copy2(root / name, destination / name)
-    print(f"Archived signed harness-start v{version}")
+    print(f"Archived signed harnessctl v{version}")
 
 
 def main():
