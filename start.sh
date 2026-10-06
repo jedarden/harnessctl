@@ -41,14 +41,16 @@ ARTIFACT_TRUSTED_PUBLIC_KEYS=("$ARTIFACT_TRUSTED_PUBLIC_KEY")
 
 # Only the user's own configuration is sourced. Values can also be exported
 # directly by the calling shell. The default preserves the fleet's behavior.
+CALLER_WORKDIR="$(pwd -P 2>/dev/null || printf '%s' "$PWD")"
 START_SH_CONFIG="${START_SH_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/harnessctl/config.sh}"
 [[ ! -f "$START_SH_CONFIG" ]] || source "$START_SH_CONFIG"
 UPDATE_REPO_URL="${START_SH_UPDATE_URL:-$REPO_URL}"
 
 usage() {
     cat <<'USAGE'
-Usage: start [claude|codex] [--agent claude|codex] [--resume <session>] [--no-update] [--no-agent-update]
+Usage: start [claude|codex] [--agent claude|codex] [--resume <session>] [-C <directory>] [--no-update] [--no-agent-update]
        start update
+       start doctor [--json]
        start --version | --help
 
   claude | codex   Coding agent to launch, e.g. `start codex`. Equivalent to
@@ -60,10 +62,17 @@ Usage: start [claude|codex] [--agent claude|codex] [--resume <session>] [--no-up
                    piped invocations never block on the prompt.
   --resume <id>    Resume the named session. Translates to `claude --resume
                    <id>` or `codex resume <id>` for the selected agent.
+  --workdir <dir>, -C <dir>
+                   Launch in this directory. Defaults to the caller's current
+                   directory. Also settable via START_SH_WORKDIR.
   --no-update      Skip the start self-update check.
   --no-agent-update
                    Use the installed agent without installing or updating it.
   update           Update only the launcher; do not launch or update an agent.
+  doctor           Check the launcher, dependencies, configuration, agents,
+                   PATH installation, and signed update source without making
+                   changes. Warnings do not make the command fail.
+  --json           Emit the doctor result as one JSON object.
   --version, -v    Print the start version and exit.
   --help, -h       Show this help and exit.
 USAGE
@@ -76,9 +85,12 @@ ORIGINAL_ARGS=("$@")
 SKIP_UPDATE=false
 SKIP_AGENT_UPDATE=false
 UPDATE_ONLY=false
+DOCTOR_ONLY=false
+DOCTOR_JSON=false
 AGENT=""
 POSITIONAL_AGENT=""
 RESUME_SESSION=""
+CLI_WORKDIR=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -99,7 +111,23 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         update)
+            if $UPDATE_ONLY || $DOCTOR_ONLY; then
+                echo "Error: only one command may be given" >&2
+                exit 2
+            fi
             UPDATE_ONLY=true
+            shift
+            ;;
+        doctor)
+            if $UPDATE_ONLY || $DOCTOR_ONLY; then
+                echo "Error: only one command may be given" >&2
+                exit 2
+            fi
+            DOCTOR_ONLY=true
+            shift
+            ;;
+        --json)
+            DOCTOR_JSON=true
             shift
             ;;
         --agent)
@@ -130,6 +158,22 @@ while [[ $# -gt 0 ]]; do
             fi
             shift
             ;;
+        --workdir|-C)
+            if [[ -z "${2:-}" ]]; then
+                echo "Error: $1 requires a directory" >&2
+                exit 2
+            fi
+            CLI_WORKDIR="$2"
+            shift 2
+            ;;
+        --workdir=*)
+            CLI_WORKDIR="${1#--workdir=}"
+            if [[ -z "$CLI_WORKDIR" ]]; then
+                echo "Error: --workdir requires a directory" >&2
+                exit 2
+            fi
+            shift
+            ;;
         claude|codex)
             if [[ -n "$POSITIONAL_AGENT" ]]; then
                 echo "Error: agent given twice: $POSITIONAL_AGENT and $1" >&2
@@ -151,9 +195,17 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if $UPDATE_ONLY && [[ -n "$AGENT$POSITIONAL_AGENT$RESUME_SESSION" ]]; then
-    echo "Error: start update cannot be combined with an agent or resume session" >&2
-    exit 1
+if $UPDATE_ONLY && [[ -n "$AGENT$POSITIONAL_AGENT$RESUME_SESSION$CLI_WORKDIR" ]]; then
+    echo "Error: start update cannot be combined with an agent, resume session, or workdir" >&2
+    exit 2
+fi
+if $DOCTOR_ONLY && [[ -n "$AGENT$POSITIONAL_AGENT$RESUME_SESSION$CLI_WORKDIR" ]]; then
+    echo "Error: start doctor cannot be combined with an agent, resume session, or workdir" >&2
+    exit 2
+fi
+if $DOCTOR_JSON && ! $DOCTOR_ONLY; then
+    echo "Error: --json is only valid with start doctor" >&2
+    exit 2
 fi
 
 if [[ -n "$POSITIONAL_AGENT" ]]; then
@@ -174,7 +226,10 @@ SCRIPT_DIR="$(dirname "$SELF_PATH")"
 TMUX_DIR="$SCRIPT_DIR/.tmux"
 TMUX_CONF="${START_SH_TMUX_CONF:-$TMUX_DIR/tmux.conf}"
 TPM_DIR="$TMUX_DIR/plugins/tpm"
-START_SH_WORKDIR="${START_SH_WORKDIR:-$SCRIPT_DIR}"
+START_SH_WORKDIR="${CLI_WORKDIR:-${START_SH_WORKDIR:-$CALLER_WORKDIR}}"
+if [[ "$START_SH_WORKDIR" != /* ]]; then
+    START_SH_WORKDIR="$CALLER_WORKDIR/$START_SH_WORKDIR"
+fi
 
 # Verify a signed release manifest fetched from the raw distribution path.
 # The public key is embedded in this launcher so a compromised or stale raw
@@ -186,13 +241,39 @@ verify_artifact_manifest() {
     local signature="$1/$ARTIFACT_SIGNATURE_FILE" public_key="$1/public-key.pem"
     local key_id signature_key_id signature_value manifest_version trusted_public_key
 
-    command -v openssl >/dev/null 2>&1 || return 1
-    command -v base64 >/dev/null 2>&1 || return 1
-    command -v sha256sum >/dev/null 2>&1 || return 1
-    curl -sfL --connect-timeout 5 --max-time 20 "$UPDATE_REPO_URL/$ARTIFACT_MANIFEST_FILE" > "$manifest" 2>/dev/null || return 1
-    curl -sfL --connect-timeout 5 --max-time 20 "$UPDATE_REPO_URL/$ARTIFACT_SIGNATURE_FILE" > "$signature" 2>/dev/null || return 1
+    command -v curl >/dev/null 2>&1 || {
+        echo "Update metadata error: curl is not installed." >&2
+        return 1
+    }
+    command -v openssl >/dev/null 2>&1 || {
+        echo "Update metadata error: openssl is not installed." >&2
+        return 1
+    }
+    openssl version >/dev/null 2>&1 || {
+        echo "Update metadata error: openssl exists but cannot run; check its shared libraries." >&2
+        return 1
+    }
+    command -v base64 >/dev/null 2>&1 || {
+        echo "Update metadata error: base64 is not installed." >&2
+        return 1
+    }
+    command -v sha256sum >/dev/null 2>&1 || {
+        echo "Update metadata error: sha256sum is not installed." >&2
+        return 1
+    }
+    if ! curl -sfL --connect-timeout 5 --max-time 20 "$UPDATE_REPO_URL/$ARTIFACT_MANIFEST_FILE" > "$manifest" 2>/dev/null; then
+        echo "Update metadata error: could not download $ARTIFACT_MANIFEST_FILE from the configured source." >&2
+        return 1
+    fi
+    if ! curl -sfL --connect-timeout 5 --max-time 20 "$UPDATE_REPO_URL/$ARTIFACT_SIGNATURE_FILE" > "$signature" 2>/dev/null; then
+        echo "Update metadata error: could not download $ARTIFACT_SIGNATURE_FILE from the configured source." >&2
+        return 1
+    fi
     mapfile -t key_ids < <(grep -E '^key_id=[A-Za-z0-9._-]+$' "$manifest" || true)
-    [[ ${#key_ids[@]} -eq 1 ]] || return 1
+    if [[ ${#key_ids[@]} -ne 1 ]]; then
+        echo "Update metadata error: the release manifest has no single valid key ID." >&2
+        return 1
+    fi
     key_id=${key_ids[0]#key_id=}
     trusted_public_key=""
     for key_index in "${!ARTIFACT_TRUSTED_KEY_IDS[@]}"; do
@@ -201,22 +282,46 @@ verify_artifact_manifest() {
             break
         fi
     done
-    [[ -n "$trusted_public_key" ]] || return 1
+    if [[ -z "$trusted_public_key" ]]; then
+        echo "Update metadata error: release key '$key_id' is not trusted by this launcher." >&2
+        return 1
+    fi
     printf '%s\n' "$trusted_public_key" > "$public_key"
 
     mapfile -t signature_ids < <(grep -E '^key_id=[A-Za-z0-9._-]+$' "$signature" || true)
-    [[ ${#signature_ids[@]} -eq 1 ]] || return 1
+    if [[ ${#signature_ids[@]} -ne 1 ]]; then
+        echo "Update metadata error: the detached signature has no single valid key ID." >&2
+        return 1
+    fi
     signature_key_id=${signature_ids[0]#key_id=}
-    [[ "$signature_key_id" == "$key_id" ]] || return 1
+    if [[ "$signature_key_id" != "$key_id" ]]; then
+        echo "Update metadata error: manifest and signature key IDs differ." >&2
+        return 1
+    fi
     mapfile -t signatures < <(grep -E '^signature=[A-Za-z0-9+/]+=*$' "$signature" || true)
-    [[ ${#signatures[@]} -eq 1 ]] || return 1
+    if [[ ${#signatures[@]} -ne 1 ]]; then
+        echo "Update metadata error: the detached signature payload is malformed." >&2
+        return 1
+    fi
     signature_value=${signatures[0]#signature=}
-    printf '%s' "$signature_value" | base64 --decode > "$directory/signature.bin" 2>/dev/null || return 1
-    openssl dgst -sha256 -verify "$public_key" -signature "$directory/signature.bin" "$manifest" >/dev/null 2>&1 || return 1
+    if ! printf '%s' "$signature_value" | base64 --decode > "$directory/signature.bin" 2>/dev/null; then
+        echo "Update metadata error: the detached signature is not valid base64." >&2
+        return 1
+    fi
+    if ! openssl dgst -sha256 -verify "$public_key" -signature "$directory/signature.bin" "$manifest" >/dev/null 2>&1; then
+        echo "Update metadata error: release manifest signature verification failed." >&2
+        return 1
+    fi
 
-    [[ "$(sed -n 's/^format=//p' "$manifest")" == "harnessctl-artifacts-v1" ]] || return 1
+    if [[ "$(sed -n 's/^format=//p' "$manifest")" != "harnessctl-artifacts-v1" ]]; then
+        echo "Update metadata error: the signed manifest uses an unsupported format." >&2
+        return 1
+    fi
     mapfile -t manifest_versions < <(grep -E '^version=[0-9]+\.[0-9]+\.[0-9]+$' "$manifest" || true)
-    [[ ${#manifest_versions[@]} -eq 1 ]] || return 1
+    if [[ ${#manifest_versions[@]} -ne 1 ]]; then
+        echo "Update metadata error: the signed manifest has no single semantic version." >&2
+        return 1
+    fi
     manifest_version=${manifest_versions[0]#version=}
     printf '%s\n' "$manifest_version"
 }
@@ -241,6 +346,184 @@ verify_artifact_file() {
         [[ "$payload_version" == "$(grep -E '^version=' "$manifest" | cut -d= -f2)" ]] || return 1
     fi
 }
+
+# Diagnostics are launcher-only. The generated installer extracts verifier
+# functions up to this marker and must not embed command-dispatch state.
+DOCTOR_NAMES=()
+DOCTOR_STATUSES=()
+DOCTOR_DETAILS=()
+DOCTOR_FAILURES=0
+DOCTOR_WARNINGS=0
+
+doctor_add() {
+    local name=$1 status=$2 detail=$3
+    DOCTOR_NAMES+=("$name")
+    DOCTOR_STATUSES+=("$status")
+    DOCTOR_DETAILS+=("$detail")
+    case "$status" in
+        fail) DOCTOR_FAILURES=$((DOCTOR_FAILURES + 1)) ;;
+        warn) DOCTOR_WARNINGS=$((DOCTOR_WARNINGS + 1)) ;;
+    esac
+}
+
+doctor_program() {
+    local name=$1 importance=$2 executable=$3
+    shift 3
+    local output first_line
+    if ! command -v "$executable" >/dev/null 2>&1; then
+        doctor_add "$name" "$importance" "$executable is not installed"
+        return
+    fi
+    if ! output=$("$executable" "$@" 2>&1); then
+        doctor_add "$name" "$importance" "$executable exists but cannot run"
+        return
+    fi
+    first_line=${output%%$'\n'*}
+    [[ -n "$first_line" ]] || first_line="$executable is available"
+    doctor_add "$name" pass "$first_line"
+}
+
+json_escape() {
+    local value=$1
+    value=${value//\\/\\\\}
+    value=${value//\"/\\\"}
+    value=${value//$'\n'/\\n}
+    value=${value//$'\r'/\\r}
+    value=${value//$'\t'/\\t}
+    printf '%s' "$value"
+}
+
+run_doctor() {
+    local core_missing=() dependency work manifest_dir remote_version error_detail
+    local path_command="" resolved_command="" permission_mode
+
+    if (( BASH_VERSINFO[0] >= 4 )); then
+        doctor_add bash pass "Bash ${BASH_VERSION}"
+    else
+        doctor_add bash fail "Bash 4 or newer is required; found ${BASH_VERSION}"
+    fi
+    doctor_program curl fail curl --version
+    doctor_program openssl fail openssl version
+
+    for dependency in base64 sha256sum grep sed sort head awk mktemp readlink dirname chmod mv; do
+        command -v "$dependency" >/dev/null 2>&1 || core_missing+=("$dependency")
+    done
+    if [[ ${#core_missing[@]} -eq 0 ]] &&
+        [[ "$(printf 'harnessctl' | base64 | base64 --decode 2>/dev/null)" == harnessctl ]] &&
+        printf 'harnessctl' | sha256sum >/dev/null 2>&1; then
+        doctor_add core-tools pass "GNU core utilities required by install and update are functional"
+    elif [[ ${#core_missing[@]} -gt 0 ]]; then
+        doctor_add core-tools fail "missing required commands: ${core_missing[*]}"
+    else
+        doctor_add core-tools fail "base64 or sha256sum exists but failed a functional check"
+    fi
+
+    if [[ -f "$START_SH_CONFIG" ]]; then
+        if bash -n "$START_SH_CONFIG" >/dev/null 2>&1; then
+            doctor_add config pass "$START_SH_CONFIG has valid Bash syntax"
+        else
+            doctor_add config fail "$START_SH_CONFIG has invalid Bash syntax"
+        fi
+    else
+        doctor_add config pass "no config file; built-in defaults apply"
+    fi
+
+    if [[ -d "$START_SH_WORKDIR" ]]; then
+        work=$(cd -- "$START_SH_WORKDIR" 2>/dev/null && pwd -P) || work=""
+        if [[ -n "$work" ]]; then
+            doctor_add workdir pass "$work"
+        else
+            doctor_add workdir fail "$START_SH_WORKDIR cannot be entered"
+        fi
+    else
+        doctor_add workdir fail "$START_SH_WORKDIR is not a directory"
+    fi
+
+    permission_mode=${START_SH_PERMISSION_MODE:-bypass}
+    case "$permission_mode" in
+        default) doctor_add permissions pass "agent approval and sandbox defaults remain enabled" ;;
+        bypass) doctor_add permissions warn "approval and sandbox protections are bypassed by the fleet-compatible default" ;;
+        *) doctor_add permissions fail "START_SH_PERMISSION_MODE must be default or bypass" ;;
+    esac
+
+    if command -v git >/dev/null 2>&1 &&
+        git -C "$SCRIPT_DIR" ls-files --error-unmatch "$(basename "$SELF_PATH")" >/dev/null 2>&1; then
+        doctor_add self-update warn "tracked source checkout; self-update is intentionally disabled"
+    elif [[ -w "$SELF_PATH" && -w "$SCRIPT_DIR" ]]; then
+        doctor_add self-update pass "$SELF_PATH can be atomically replaced"
+    else
+        doctor_add self-update fail "$SELF_PATH or its directory is not writable"
+    fi
+
+    path_command=$(command -v start 2>/dev/null || true)
+    if [[ -z "$path_command" ]]; then
+        doctor_add path warn "start is not on PATH"
+    elif [[ -e "$path_command" || -L "$path_command" ]]; then
+        resolved_command=$(readlink -f "$path_command" 2>/dev/null || true)
+        if [[ "$resolved_command" == "$SELF_PATH" ]]; then
+            doctor_add path pass "$path_command resolves to this launcher"
+        else
+            doctor_add path warn "$path_command resolves to another command"
+        fi
+    else
+        doctor_add path warn "start resolves to a shell function or alias instead of this launcher"
+    fi
+
+    doctor_program tmux warn tmux -V
+    doctor_program git warn git --version
+    doctor_program npm warn npm --version
+    doctor_program claude warn claude --version
+    doctor_program codex warn codex --version
+
+    manifest_dir=$(mktemp -d "${TMPDIR:-/tmp}/harnessctl-doctor.XXXXXX" 2>/dev/null || true)
+    if [[ -z "$manifest_dir" ]]; then
+        doctor_add update-source fail "could not create a temporary verification directory"
+    else
+        if remote_version=$(verify_artifact_manifest "$manifest_dir" 2>"$manifest_dir/error"); then
+            doctor_add update-source pass "signed release v$remote_version is reachable and trusted"
+        else
+            error_detail=$(head -n 1 "$manifest_dir/error" 2>/dev/null || true)
+            [[ -n "$error_detail" ]] || error_detail="signed release metadata could not be verified"
+            doctor_add update-source warn "$error_detail"
+        fi
+        rm -rf "$manifest_dir"
+    fi
+
+    if $DOCTOR_JSON; then
+        local index comma="" ok=true
+        (( DOCTOR_FAILURES == 0 )) || ok=false
+        printf '{"schema":"harnessctl-doctor-v1","version":"%s","ok":%s,"warnings":%d,"failures":%d,"checks":[' \
+            "$(json_escape "$START_SH_VERSION")" "$ok" "$DOCTOR_WARNINGS" "$DOCTOR_FAILURES"
+        for index in "${!DOCTOR_NAMES[@]}"; do
+            printf '%s{"name":"%s","status":"%s","detail":"%s"}' \
+                "$comma" \
+                "$(json_escape "${DOCTOR_NAMES[$index]}")" \
+                "$(json_escape "${DOCTOR_STATUSES[$index]}")" \
+                "$(json_escape "${DOCTOR_DETAILS[$index]}")"
+            comma=,
+        done
+        printf ']}\n'
+    else
+        printf 'start doctor v%s\n' "$START_SH_VERSION"
+        local index label
+        for index in "${!DOCTOR_NAMES[@]}"; do
+            label=${DOCTOR_STATUSES[$index]^^}
+            printf '%-4s %-14s %s\n' "$label" "${DOCTOR_NAMES[$index]}" "${DOCTOR_DETAILS[$index]}"
+        done
+        if (( DOCTOR_FAILURES == 0 )); then
+            printf 'Ready with %d warning(s).\n' "$DOCTOR_WARNINGS"
+        else
+            printf 'Not ready: %d failure(s), %d warning(s).\n' "$DOCTOR_FAILURES" "$DOCTOR_WARNINGS"
+        fi
+    fi
+
+    (( DOCTOR_FAILURES == 0 ))
+}
+
+if $DOCTOR_ONLY; then
+    run_doctor
+    exit $?
+fi
 
 # Self-update function
 check_for_self_update() {
@@ -280,6 +563,7 @@ check_for_self_update() {
             # atomic replacement on the same filesystem. Never stream a
             # remote response directly into the working launcher.
             if ! curl -sfL --connect-timeout 5 --max-time 20 "$UPDATE_REPO_URL/start.sh" > "$new_script" 2>/dev/null; then
+                echo "Warning: could not download start.sh from the configured update source; keeping current version $START_SH_VERSION" >&2
                 rm -f "$new_script"
                 rm -rf "$manifest_dir"
                 return 1
@@ -288,9 +572,20 @@ check_for_self_update() {
             # Require the signed manifest hash and the payload's own version
             # before the syntax gate. Never install a valid-but-stale script
             # or a payload from a different release.
-            if ! verify_artifact_file "$manifest_dir/$ARTIFACT_MANIFEST_FILE" "start.sh" "$new_script" ||
-                [[ ! -s "$new_script" ]] || ! bash -n "$new_script" 2>/dev/null; then
-                echo "Warning: fetched start.sh failed authenticity, integrity, or syntax checks; keeping current version $START_SH_VERSION" >&2
+            if [[ ! -s "$new_script" ]]; then
+                echo "Warning: downloaded start.sh is empty; keeping current version $START_SH_VERSION" >&2
+                rm -f "$new_script"
+                rm -rf "$manifest_dir"
+                return 1
+            fi
+            if ! verify_artifact_file "$manifest_dir/$ARTIFACT_MANIFEST_FILE" "start.sh" "$new_script"; then
+                echo "Warning: downloaded start.sh does not match the signed release hash and version; keeping current version $START_SH_VERSION" >&2
+                rm -f "$new_script"
+                rm -rf "$manifest_dir"
+                return 1
+            fi
+            if ! bash -n "$new_script" 2>/dev/null; then
+                echo "Warning: downloaded start.sh has invalid Bash syntax; keeping current version $START_SH_VERSION" >&2
                 rm -f "$new_script"
                 rm -rf "$manifest_dir"
                 return 1
@@ -343,6 +638,16 @@ ensure_start_command() {
 }
 
 ensure_start_command
+
+if [[ ! -d "$START_SH_WORKDIR" ]]; then
+    echo "Error: launch working directory is not a directory: $START_SH_WORKDIR" >&2
+    exit 1
+fi
+if ! cd -- "$START_SH_WORKDIR"; then
+    echo "Error: cannot enter launch working directory: $START_SH_WORKDIR" >&2
+    exit 1
+fi
+START_SH_WORKDIR=$(pwd -P)
 
 # Phonetic alphabet for tmux session naming
 PHONETIC_ALPHABET=(

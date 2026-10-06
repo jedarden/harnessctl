@@ -234,6 +234,8 @@ assert_no_update_temps
 echo 'Checking unavailable and malformed signed release metadata...'
 run_case version-unavailable version-unavailable
 assert_unchanged 'unavailable release metadata damaged the launcher'
+assert_contains 'could not download artifact-manifest.txt from the configured source' "$CASE_OUTPUT" \
+    'unavailable release metadata did not report its failure stage'
 assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model sonnet' "$CASE_OUTPUT" \
     'launcher did not continue with the installed agent after metadata became unavailable'
 payload_fetches=$(grep -Ec '/start\.sh$' "$CURL_LOG" || true)
@@ -249,12 +251,16 @@ assert_no_update_temps
 echo 'Checking tampered manifests and stale/tampered launcher payloads...'
 run_case manifest-tampered manifest-tampered
 assert_unchanged 'tampered release manifest damaged the launcher'
+assert_contains 'release manifest signature verification failed' "$CASE_OUTPUT" \
+    'tampered release manifest did not report the signature failure'
 assert_contains 'release manifest verification failed' "$CASE_OUTPUT" \
     'tampered release manifest was not rejected'
 assert_no_update_temps
 
 run_case signed-wrong-format signed-wrong-format
 assert_unchanged 'cross-protocol signed manifest damaged the launcher'
+assert_contains 'signed manifest uses an unsupported format' "$CASE_OUTPUT" \
+    'cross-protocol signed manifest did not report the format mismatch'
 assert_contains 'release manifest verification failed' "$CASE_OUTPUT" \
     'cross-protocol signed manifest was not rejected'
 assert_no_update_temps
@@ -262,6 +268,8 @@ assert_no_update_temps
 echo 'Checking unavailable and syntax-invalid launcher payloads...'
 run_case payload-unavailable payload-unavailable
 assert_unchanged 'unavailable launcher payload damaged the launcher'
+assert_contains 'could not download start.sh from the configured update source' "$CASE_OUTPUT" \
+    'unavailable launcher payload did not report its failure stage'
 assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model sonnet' "$CASE_OUTPUT" \
     'launcher did not continue with the installed agent after payload fetch failure'
 payload_fetches=$(grep -Ec '/start\.sh$' "$CURL_LOG" || true)
@@ -276,26 +284,28 @@ assert_no_update_temps
 
 run_case payload-empty payload-empty
 assert_unchanged 'empty launcher payload damaged the launcher'
+assert_contains 'downloaded start.sh is empty' "$CASE_OUTPUT" \
+    'empty launcher payload did not report its failure stage'
 assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model sonnet' "$CASE_OUTPUT" \
     'launcher did not remain usable after an empty payload'
 assert_no_update_temps
 
 run_case payload-tampered payload-tampered
 assert_unchanged 'tampered launcher payload damaged the launcher'
-assert_contains 'failed authenticity, integrity, or syntax checks' "$CASE_OUTPUT" \
+assert_contains 'does not match the signed release hash and version' "$CASE_OUTPUT" \
     'tampered launcher payload was not rejected'
 assert_no_update_temps
 
 run_case payload-stale payload-stale
 assert_unchanged 'stale launcher payload damaged the launcher'
-assert_contains 'failed authenticity, integrity, or syntax checks' "$CASE_OUTPUT" \
+assert_contains 'does not match the signed release hash and version' "$CASE_OUTPUT" \
     'stale launcher payload was not rejected'
 assert_no_update_temps
 
 run_case payload-malformed payload-malformed
 assert_unchanged 'syntax-invalid launcher payload damaged the launcher'
-assert_contains 'failed authenticity, integrity, or syntax checks' "$CASE_OUTPUT" \
-    'syntax-gate failure was not reported'
+assert_contains 'does not match the signed release hash and version' "$CASE_OUTPUT" \
+    'malformed payload failure was not reported'
 assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model sonnet' "$CASE_OUTPUT" \
     'launcher did not remain usable after a syntax-gate failure'
 [[ ! -f "$MV_LOG" ]] || fail 'syntax-invalid payload reached the replacement step'
@@ -324,6 +334,33 @@ assert_contains 'could not install fetched start.sh, keeping current version' "$
     'replacement failure was not reported'
 assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model sonnet' "$output" \
     'launcher did not remain usable after replacement failure'
+assert_no_update_temps
+
+echo 'Checking a present but unusable OpenSSL reports the dependency failure...'
+setup_case broken-openssl success
+printf '%s\n' '#!/usr/bin/env bash' 'exit 127' > "$FAKE_BIN/openssl"
+chmod +x "$FAKE_BIN/openssl"
+output=$(
+    HOME="$CASE_HOME" \
+    PATH="$FAKE_BIN:$BASH_BIN_DIR:$OPENSSL_BIN_DIR:/usr/local/bin:/usr/bin:/bin" \
+    HERDR_ENV=self-update-test \
+    FAKE_CURL_MODE="$CASE_MODE" \
+    FAKE_CURL_LOG="$CURL_LOG" \
+    FAKE_PAYLOAD_FILE="$PAYLOAD_FILE" \
+    FAKE_STALE_PAYLOAD_FILE="$STALE_PAYLOAD_FILE" \
+    FAKE_MANIFEST_FILE="$ROOT/artifact-manifest.txt" \
+    FAKE_SIGNATURE_FILE="$ROOT/artifact-manifest.sig" \
+    FAKE_WRONG_FORMAT_MANIFEST="$WRONG_FORMAT_MANIFEST" \
+    FAKE_WRONG_FORMAT_SIGNATURE="$WRONG_FORMAT_SIGNATURE" \
+    FAKE_MV_LOG="$MV_LOG" \
+    FAKE_MV_FAILURE=false \
+    "$LAUNCHER" --agent claude 2>&1
+)
+assert_unchanged 'unusable OpenSSL damaged the launcher'
+assert_contains 'openssl exists but cannot run; check its shared libraries' "$output" \
+    'unusable OpenSSL did not produce an actionable error'
+assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model sonnet' "$output" \
+    'launcher did not continue after the OpenSSL update-check failure'
 assert_no_update_temps
 
 echo 'start.sh self-update regression tests passed.'

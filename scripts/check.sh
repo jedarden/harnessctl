@@ -9,6 +9,7 @@ done
 python3 scripts/release.py parity
 bash tests/start-sh-self-update-test.sh
 bash tests/start-sh-interface-test.sh
+bash tests/doctor-test.sh
 bash tests/install-update-test.sh
 bash tests/configuration-test.sh
 bash tests/release-test.sh

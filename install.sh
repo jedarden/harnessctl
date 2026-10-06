@@ -30,13 +30,39 @@ verify_artifact_manifest() {
     local signature="$1/$ARTIFACT_SIGNATURE_FILE" public_key="$1/public-key.pem"
     local key_id signature_key_id signature_value manifest_version trusted_public_key
 
-    command -v openssl >/dev/null 2>&1 || return 1
-    command -v base64 >/dev/null 2>&1 || return 1
-    command -v sha256sum >/dev/null 2>&1 || return 1
-    curl -sfL --connect-timeout 5 --max-time 20 "$UPDATE_REPO_URL/$ARTIFACT_MANIFEST_FILE" > "$manifest" 2>/dev/null || return 1
-    curl -sfL --connect-timeout 5 --max-time 20 "$UPDATE_REPO_URL/$ARTIFACT_SIGNATURE_FILE" > "$signature" 2>/dev/null || return 1
+    command -v curl >/dev/null 2>&1 || {
+        echo "Update metadata error: curl is not installed." >&2
+        return 1
+    }
+    command -v openssl >/dev/null 2>&1 || {
+        echo "Update metadata error: openssl is not installed." >&2
+        return 1
+    }
+    openssl version >/dev/null 2>&1 || {
+        echo "Update metadata error: openssl exists but cannot run; check its shared libraries." >&2
+        return 1
+    }
+    command -v base64 >/dev/null 2>&1 || {
+        echo "Update metadata error: base64 is not installed." >&2
+        return 1
+    }
+    command -v sha256sum >/dev/null 2>&1 || {
+        echo "Update metadata error: sha256sum is not installed." >&2
+        return 1
+    }
+    if ! curl -sfL --connect-timeout 5 --max-time 20 "$UPDATE_REPO_URL/$ARTIFACT_MANIFEST_FILE" > "$manifest" 2>/dev/null; then
+        echo "Update metadata error: could not download $ARTIFACT_MANIFEST_FILE from the configured source." >&2
+        return 1
+    fi
+    if ! curl -sfL --connect-timeout 5 --max-time 20 "$UPDATE_REPO_URL/$ARTIFACT_SIGNATURE_FILE" > "$signature" 2>/dev/null; then
+        echo "Update metadata error: could not download $ARTIFACT_SIGNATURE_FILE from the configured source." >&2
+        return 1
+    fi
     mapfile -t key_ids < <(grep -E '^key_id=[A-Za-z0-9._-]+$' "$manifest" || true)
-    [[ ${#key_ids[@]} -eq 1 ]] || return 1
+    if [[ ${#key_ids[@]} -ne 1 ]]; then
+        echo "Update metadata error: the release manifest has no single valid key ID." >&2
+        return 1
+    fi
     key_id=${key_ids[0]#key_id=}
     trusted_public_key=""
     for key_index in "${!ARTIFACT_TRUSTED_KEY_IDS[@]}"; do
@@ -45,22 +71,46 @@ verify_artifact_manifest() {
             break
         fi
     done
-    [[ -n "$trusted_public_key" ]] || return 1
+    if [[ -z "$trusted_public_key" ]]; then
+        echo "Update metadata error: release key '$key_id' is not trusted by this launcher." >&2
+        return 1
+    fi
     printf '%s\n' "$trusted_public_key" > "$public_key"
 
     mapfile -t signature_ids < <(grep -E '^key_id=[A-Za-z0-9._-]+$' "$signature" || true)
-    [[ ${#signature_ids[@]} -eq 1 ]] || return 1
+    if [[ ${#signature_ids[@]} -ne 1 ]]; then
+        echo "Update metadata error: the detached signature has no single valid key ID." >&2
+        return 1
+    fi
     signature_key_id=${signature_ids[0]#key_id=}
-    [[ "$signature_key_id" == "$key_id" ]] || return 1
+    if [[ "$signature_key_id" != "$key_id" ]]; then
+        echo "Update metadata error: manifest and signature key IDs differ." >&2
+        return 1
+    fi
     mapfile -t signatures < <(grep -E '^signature=[A-Za-z0-9+/]+=*$' "$signature" || true)
-    [[ ${#signatures[@]} -eq 1 ]] || return 1
+    if [[ ${#signatures[@]} -ne 1 ]]; then
+        echo "Update metadata error: the detached signature payload is malformed." >&2
+        return 1
+    fi
     signature_value=${signatures[0]#signature=}
-    printf '%s' "$signature_value" | base64 --decode > "$directory/signature.bin" 2>/dev/null || return 1
-    openssl dgst -sha256 -verify "$public_key" -signature "$directory/signature.bin" "$manifest" >/dev/null 2>&1 || return 1
+    if ! printf '%s' "$signature_value" | base64 --decode > "$directory/signature.bin" 2>/dev/null; then
+        echo "Update metadata error: the detached signature is not valid base64." >&2
+        return 1
+    fi
+    if ! openssl dgst -sha256 -verify "$public_key" -signature "$directory/signature.bin" "$manifest" >/dev/null 2>&1; then
+        echo "Update metadata error: release manifest signature verification failed." >&2
+        return 1
+    fi
 
-    [[ "$(sed -n 's/^format=//p' "$manifest")" == "harnessctl-artifacts-v1" ]] || return 1
+    if [[ "$(sed -n 's/^format=//p' "$manifest")" != "harnessctl-artifacts-v1" ]]; then
+        echo "Update metadata error: the signed manifest uses an unsupported format." >&2
+        return 1
+    fi
     mapfile -t manifest_versions < <(grep -E '^version=[0-9]+\.[0-9]+\.[0-9]+$' "$manifest" || true)
-    [[ ${#manifest_versions[@]} -eq 1 ]] || return 1
+    if [[ ${#manifest_versions[@]} -ne 1 ]]; then
+        echo "Update metadata error: the signed manifest has no single semantic version." >&2
+        return 1
+    fi
     manifest_version=${manifest_versions[0]#version=}
     printf '%s\n' "$manifest_version"
 }
@@ -101,9 +151,24 @@ while [[ $# -gt 0 ]]; do
             esac
             shift 2
             ;;
-        --version) echo "harnessctl installer v$START_SH_VERSION"; exit 0 ;;
+        --version|-v) echo "harnessctl installer v$START_SH_VERSION"; exit 0 ;;
         --help|-h)
-            echo 'Usage: bash install.sh [--script-path PATH] [--bin-dir DIR] [--source RELEASE-URL]'
+            cat <<'HELP'
+Usage: bash install.sh [OPTIONS]
+
+Authenticate and install the signed harnessctl launcher.
+
+Options:
+  --script-path PATH  Launcher destination (default: ~/start.sh)
+  --bin-dir DIR       Directory for the start symlink (default: ~/.local/bin)
+  --source URL        Signed release root containing the manifest and artifacts
+  --version, -v       Print the installer version and exit
+  --help, -h          Show this help and exit
+
+Environment equivalents:
+  START_SH_INSTALL_PATH  Launcher destination
+  START_SH_BIN_DIR       Directory for the start symlink
+HELP
             exit 0
             ;;
         *) echo "Error: unknown option: $1" >&2; exit 2 ;;
@@ -112,6 +177,10 @@ done
 for dependency in curl openssl sha256sum base64 bash; do
     command -v "$dependency" >/dev/null 2>&1 || { echo "Error: $dependency is required" >&2; exit 1; }
 done
+openssl version >/dev/null 2>&1 || {
+    echo 'Error: openssl exists but cannot run; check its shared libraries' >&2
+    exit 1
+}
 
 mkdir -p "$(dirname "$script_path")" "$bin_dir"
 script_path="$(readlink -m "$script_path")"
@@ -147,5 +216,5 @@ chmod 0755 "$work/start.sh"
 mv -f "$work/start.sh" "$script_path"
 [[ -L "$link" ]] || ln -s "$script_path" "$link"
 echo "Installed start v$version: $link -> $script_path"
-echo 'Run start claude, start codex, or start update.'
+echo 'Run start doctor, start claude, or start codex.'
 case ":$PATH:" in *":$bin_dir:"*) ;; *) printf 'Add to your shell PATH: export PATH=%q:$PATH\n' "$bin_dir" ;; esac

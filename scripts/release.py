@@ -29,7 +29,10 @@ def metadata(root=ROOT):
 def installer(root=ROOT):
     source, version, _, _ = metadata(root)
     trust = source[source.index('START_SH_VERSION="'):source.index('\n# Only the user')]
-    functions = source[source.index('verify_artifact_manifest() {'):source.index('# Self-update function')]
+    functions = source[
+        source.index('verify_artifact_manifest() {'):
+        source.index('# Diagnostics are launcher-only.')
+    ]
     template = (root / "scripts/install.sh.in").read_text()
     generated = template.replace("@TRUST_BLOCK@", trust).replace("@VERIFY_FUNCTIONS@", functions)
     return generated, version

@@ -49,11 +49,13 @@ setup_case() {
     PATH_VALUE="$CASE_HOME/.local/bin:$FAKE_BIN:$BASH_BIN_DIR:/usr/local/bin:/usr/bin:/bin"
     FAKE_TMUX_LOG="$CASE_ROOT/tmux.log"
     FAKE_AGENT_LOG="$CASE_ROOT/agent.log"
+    CALLER_DIR="$CASE_ROOT/caller work"
 
     mkdir -p \
         "$CASE_HOME/.local/bin" \
         "$CASE_HOME/.tmux/plugins/tpm/bin" \
-        "$FAKE_BIN"
+        "$FAKE_BIN" \
+        "$CALLER_DIR"
     cp "$START_SH" "$LAUNCHER"
     chmod +x "$LAUNCHER"
     ln -s "$LAUNCHER" "$CASE_HOME/.local/bin/start"
@@ -137,6 +139,7 @@ run_start() {
                 unset HERDR_ENV
             fi
             hash -r
+            cd "$CALLER_DIR"
             start "$@" < /dev/null
         } 2>&1
     ); then
@@ -158,6 +161,7 @@ run_invalid() {
             export FAKE_TMUX_LOG FAKE_AGENT_LOG
             unset TMUX HERDR_ENV HERDR_PANE_ID START_SH_AGENT
             hash -r
+            cd "$CALLER_DIR"
             start "$@" < /dev/null
         } 2>&1
     ); then
@@ -180,8 +184,8 @@ assert_file_contains \
     'tmux <has-session> <-t> <alpha>' "$FAKE_TMUX_LOG" \
     'default did not probe the first tmux session name'
 assert_file_contains \
-    'tmux <-f> <'"$CASE_HOME"'/.tmux/tmux.conf> <new-session> <-d> <-s> <alpha>' \
-    "$FAKE_TMUX_LOG" 'default did not create a tmux session'
+    'tmux <-f> <'"$CASE_HOME"'/.tmux/tmux.conf> <new-session> <-d> <-s> <alpha> <-c> <'"$CALLER_DIR"'>' \
+    "$FAKE_TMUX_LOG" 'default did not create a tmux session in the caller directory'
 assert_file_contains \
     'unset CLAUDECODE && exec claude --dangerously-skip-permissions --model sonnet' \
     "$FAKE_TMUX_LOG" 'default did not send the Claude command to tmux'
@@ -189,6 +193,15 @@ assert_not_contains 'exec codex' "$(<"$FAKE_TMUX_LOG")" \
     'default unexpectedly dispatched Codex'
 [[ "$(readlink "$CASE_HOME/.local/bin/start")" == "$LAUNCHER" ]] ||
     fail 'PATH command symlink points at the wrong deployed file'
+
+echo 'Checking explicit working-directory selection...'
+setup_case explicit-workdir
+EXPLICIT_DIR="$CALLER_DIR/selected work"
+mkdir -p "$EXPLICIT_DIR"
+run_start false claude --no-update -C 'selected work'
+assert_file_contains \
+    'tmux <-f> <'"$CASE_HOME"'/.tmux/tmux.conf> <new-session> <-d> <-s> <alpha> <-c> <'"$EXPLICIT_DIR"'>' \
+    "$FAKE_TMUX_LOG" '--workdir did not control the tmux working directory'
 
 echo 'Checking positional Codex dispatch through tmux...'
 setup_case codex-tmux
@@ -253,5 +266,13 @@ assert_contains 'Error: --resume requires a session ID or name' \
     "$CASE_OUTPUT" 'missing resume value was accepted'
 assert_file_not_exists "$FAKE_AGENT_LOG" \
     'missing resume value reached an agent'
+
+run_invalid json-without-doctor --json
+assert_contains 'Error: --json is only valid with start doctor' \
+    "$CASE_OUTPUT" '--json was accepted without doctor'
+
+run_invalid missing-workdir claude --workdir
+assert_contains 'Error: --workdir requires a directory' \
+    "$CASE_OUTPUT" 'missing workdir value was accepted'
 
 echo 'start command interface regression tests passed.'

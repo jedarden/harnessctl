@@ -45,12 +45,14 @@ setup_case() {
     CASE_RUNTIME_LOG="$CASE_ROOT/runtime.log"
     CASE_SUDO_LOG="$CASE_ROOT/sudo.log"
     CASE_OUTPUT="$CASE_ROOT/start.out"
+    CASE_WORKDIR="$CASE_ROOT/caller work"
     mkdir -p \
         "$CASE_HOME/.local/bin" \
         "$CASE_HOME/.tmux/plugins/tpm/bin" \
         "$CASE_BIN" \
         "$CASE_TOOL_BIN" \
-        "$CASE_TMUX_TMPDIR"
+        "$CASE_TMUX_TMPDIR" \
+        "$CASE_WORKDIR"
     chmod 700 "$CASE_TMUX_TMPDIR"
 
     # Keep host-installed Claude/Codex binaries out of PATH. The launcher
@@ -148,12 +150,13 @@ run_tmux_case() {
         export SHELL="$CASE_TOOL_BIN/bash"
         unset TMUX TMUX_PANE HERDR_ENV START_SH_AGENT
         hash -r
+        cd "$CASE_WORKDIR"
         # tmux attach-session requires a controlling terminal. `script`
         # supplies one without coupling the test to the caller's terminal.
         script -qefc "start $agent --resume $resume_id --no-update" /dev/null
     ) > "$CASE_OUTPUT" 2>&1 &
     local start_pid=$!
-    local runtime_line="phase=runtime agent=$agent uid=$TEST_UID pwd=$CASE_HOME args=$expected_args"
+    local runtime_line="phase=runtime agent=$agent uid=$TEST_UID pwd=$CASE_WORKDIR args=$expected_args"
     local ready=false
 
     for _ in $(seq 1 100); do
@@ -184,8 +187,8 @@ run_tmux_case() {
 
     local pane_path
     pane_path=$(tmux_case_command display-message -t alpha -p '#{pane_current_path}')
-    [[ "$pane_path" == "$CASE_HOME" ]] ||
-        fail "$agent tmux pane started in $pane_path instead of $CASE_HOME"
+    [[ "$pane_path" == "$CASE_WORKDIR" ]] ||
+        fail "$agent tmux pane started in $pane_path instead of $CASE_WORKDIR"
 
     assert_file_contains 'choom -n -1000' "$CASE_SUDO_LOG" \
         "$agent runtime did not exercise the best-effort unprivileged OOM-protection path"

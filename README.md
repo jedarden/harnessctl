@@ -1,100 +1,172 @@
 # harnessctl
 
-A self-updating `start` command for Claude Code and Codex. It creates a named
-tmux session from a bare shell and runs directly inside an existing tmux or
-herdr pane. Resume a coding session without remembering each agent's syntax.
-The repository is named `harnessctl`; the installed command remains `start`
-for bootstrap compatibility and operator muscle memory.
+`harnessctl` installs the `start` command: a small Bash launcher for Claude
+Code and Codex that updates itself, resumes sessions left by Herdr, and avoids
+nesting tmux inside tmux or Herdr.
 
-Source of truth: [Forgejo](https://git.ardenone.com/jedarden/harnessctl).
-[GitHub](https://github.com/jedarden/harnessctl) is a read-only release mirror.
+Forgejo is the [source of truth](https://git.ardenone.com/jedarden/harnessctl).
+GitHub is a [read-only release mirror](https://github.com/jedarden/harnessctl).
+
+## Before you run it
+
+An ordinary `start` invocation has three deliberate side effects:
+
+- It checks the configured source for a newer signed launcher. Use
+  `--no-update` for a deterministic invocation.
+- It installs or updates the selected coding agent. Use `--no-agent-update` to
+  require an already-installed agent.
+- For compatibility with the original launcher on dedicated hosts, its default
+  permission mode is `bypass`. Set `START_SH_PERMISSION_MODE=default` to retain
+  the agent's normal approval and sandbox behavior.
+
+The launcher never replaces a tracked source file, an unrelated `start`
+command, or a newer installed version.
 
 ## Install
 
-Linux, Bash 4+, curl, OpenSSL, GNU coreutils, and git are supported. tmux is
-needed for bare-shell launches. Codex installation additionally needs npm;
-already-installed agents can run with `--no-agent-update`.
+The supported platform is Linux with Bash 4+, curl, OpenSSL, and GNU coreutils.
+Bare-shell launches also need tmux and git. Automatic Codex installation needs
+Node.js/npm; an already-installed Codex can run without npm.
 
-Download the installer from a pinned release and run it:
+Download the bootstrap installer from the immutable v1.4.0 release commit:
 
 ```bash
 curl -fsSLo /tmp/harnessctl-install.sh \
-  https://raw.githubusercontent.com/jedarden/harnessctl/main/releases/v1.4.0/install.sh
+  https://raw.githubusercontent.com/jedarden/harnessctl/f87ab1bf25a64a48320b288111c2b1e823580164/releases/v1.4.0/install.sh
+printf '%s  %s\n' \
+  c5b54e7445c1fa9fe3b65ce1c65baec49ee4eb9706fad3829fe3dd284e33bebe \
+  /tmp/harnessctl-install.sh | sha256sum -c -
 bash /tmp/harnessctl-install.sh --source \
-  https://raw.githubusercontent.com/jedarden/harnessctl/main/releases/v1.4.0
+  https://raw.githubusercontent.com/jedarden/harnessctl/f87ab1bf25a64a48320b288111c2b1e823580164/releases/v1.4.0
 ```
 
-The installer authenticates the release manifest using its embedded public key,
-checks the launcher hash and version, and installs it atomically as `~/start.sh`
-with a `~/.local/bin/start` symlink. Include `~/.local/bin` in your PATH.
-Existing unrelated `start` commands and newer installed versions are preserved.
-Use `--script-path PATH` and `--bin-dir DIR` for custom deployment locations.
+The initial installer is trusted through the immutable commit and checksum
+above. Once running, its embedded public key authenticates the release
+manifest, launcher hash, and launcher version before atomically installing
+`~/start.sh` and linking `~/.local/bin/start`. The public-key DER SHA-256
+fingerprint is
+`f8e3bdf686cbdcbf5608276b2e63db734f64e9329cfaac7c12843826aee14080`.
+Obtaining this README and checksum from the same compromised channel would not
+provide independent bootstrap trust; see [SECURITY.md](SECURITY.md).
 
-## Use
+If needed, add the command to your shell path:
 
 ```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Adopt the latest signed release, then inspect the installation without changing
+it:
+
+```bash
+start update
+start doctor
+```
+
+Use `bash /tmp/harnessctl-install.sh --help` for custom `--script-path` and
+`--bin-dir` destinations. Their environment equivalents are
+`START_SH_INSTALL_PATH` and `START_SH_BIN_DIR`.
+
+## Launch and resume
+
+Run from the project directory you want the agent to use:
+
+```bash
+cd ~/projects/example
 start claude
 start codex
-start codex --resume SESSION_ID
-start update
-start --version
-start codex --no-update --no-agent-update
 ```
 
-Every ordinary launch checks for a newer signed launcher. Failed downloads or
-verification preserve the installed file and allow the agent to launch.
-`start update` updates only the launcher and returns a failing exit status when
-verification or installation fails. It never starts or updates an agent.
-`--no-update` skips launcher updates; `--no-agent-update` separately disables
-agent installation and version lookups. Resume arguments survive update re-exec.
-The updater refuses to replace tracked source files.
-
-## Configure
-
-Export variables or put them in `~/.config/harnessctl/config.sh`:
+When a Herdr tab exits a coding harness, copy the session identifier Herdr
+leaves in the pane and pass it back to the same harness:
 
 ```bash
-START_SH_AGENT=codex
-START_SH_PERMISSION_MODE=default
-START_SH_CLAUDE_MODEL=sonnet
-# Optional: START_SH_CODEX_MODEL=<model available to your account>
-# Optional: START_SH_TMUX_CONF="$HOME/.tmux.conf"
-# Optional: START_SH_WORKDIR="$HOME/projects"
+start claude --resume 4dcb6804-7929-4ae4-92c6-cb0cc43b8290
+start codex --resume 019dbf76-c928-76b3-84b9-6d8b14fdb99c
 ```
 
-`START_SH_CONFIG` selects another configuration file. `START_SH_AGENT` applies
-when no agent argument is given. With no selection, an interactive shell prompts;
-a noninteractive shell defaults to Claude. The default permission mode is
-`bypass`, preserving the original dedicated-host launcher; `default` leaves the
-selected agent's approval and sandbox configuration in effect. Claude defaults
-to Sonnet; Codex uses its own configured model. The default working directory is
-the deployed script's directory. `START_SH_UPDATE_URL` overrides distribution
-while keeping pinned signature verification.
+Quote session names containing spaces or shell characters. `start` translates
+to the correct Claude or Codex resume syntax and preserves the argument if an
+update restarts the launcher.
 
-## Develop and release
+Use `-C` or `--workdir` when the caller is not already in the project:
 
 ```bash
-python3 scripts/release.py generate
-scripts/check.sh
+start codex -C ~/projects/example
+start claude --workdir ~/projects/example --resume SESSION_ID
 ```
 
-The complete local gate covers signed update failures, atomic replacement,
-installation, explicit updates, CLI dispatch, configuration, and real tmux
-runtime. It uses disposable signed fixtures and does not contact a live signer.
+| Context | Behavior | Working directory |
+| --- | --- | --- |
+| Bare shell | Creates the first free NATO-named tmux session and attaches | Caller directory or `-C` |
+| Existing tmux | Runs the agent directly; no nested session | Caller directory or `-C` |
+| Herdr pane | Runs the agent directly and leaves multiplexing to Herdr | Caller directory or `-C` |
 
-Publish with the protected `harnessctl-release-sign` WorkflowTemplate in
-iad-ci using `expected-commit=<exact Forgejo main SHA>` and a forward semantic
-`version`. It prepares, Transit-signs, verifies, archives, commits, and pushes
-only to Forgejo. The server-side mirror publishes the same commit on GitHub.
-Signing uses the existing non-exportable
-`bootstrap-signing/bootstrap-rsa-2026-10` key for continuity with deployed hosts.
-Private key material remains in OpenBao. Each `releases/vVERSION/` directory is
-immutable. Roll back behavior by releasing older code under a higher version.
+## Command reference
 
-For an operator-held key or authenticated Transit environment, the same helper
-also supports `prepare-unsigned VERSION`, `sign --key /secure/path/key.pem`,
-`sign --transit-key MOUNT/KEY`, `check`, and `archive`.
+| Command or option | Effect |
+| --- | --- |
+| `start claude`, `start codex` | Select and launch an agent |
+| `--agent claude\|codex` | Long-form agent selection |
+| `--resume ID` | Resume a Claude or Codex session |
+| `-C DIR`, `--workdir DIR` | Launch from an explicit directory |
+| `--no-update` | Skip the launcher update check |
+| `--no-agent-update` | Do not install, update, or query the selected agent |
+| `start update` | Update only the launcher |
+| `start doctor [--json]` | Diagnose the installation; warnings do not fail |
+| `start --version` | Print the installed launcher version |
 
-Bootstrap migration and release operations are documented in
-[the release notes](docs/notes/releases.md). The implementation plan is in
-[docs/plan/plan.md](docs/plan/plan.md).
+`start doctor --json` emits the stable schema name `harnessctl-doctor-v1`.
+Exit status is `0` when no required check fails and `1` otherwise. Warnings,
+including an unavailable update service or an uninstalled optional agent, do
+not make the diagnostic fail.
+
+## Configuration
+
+Export variables or put assignments in
+`~/.config/harnessctl/config.sh`. The config file is sourced after incoming
+environment variables; its assignments therefore take precedence. CLI agent
+and workdir options take precedence over configuration.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `START_SH_AGENT` | prompt, or Claude without a TTY | `claude` or `codex` |
+| `START_SH_PERMISSION_MODE` | `bypass` | `default` retains approvals/sandbox; `bypass` disables them |
+| `START_SH_CLAUDE_MODEL` | `sonnet` | Claude model argument |
+| `START_SH_CODEX_MODEL` | unset | Optional Codex model argument |
+| `START_SH_WORKDIR` | caller directory | Launch directory when `-C` is absent |
+| `START_SH_TMUX_CONF` | `~/.tmux/tmux.conf` for the default install | tmux configuration path |
+| `START_SH_UPDATE_URL` | signed GitHub mirror | Alternate signed distribution root |
+| `START_SH_CONFIG` | `$XDG_CONFIG_HOME/harnessctl/config.sh` | Alternate config file |
+
+A safer personal-host configuration is:
+
+```bash
+mkdir -p ~/.config/harnessctl
+printf '%s\n' \
+  'START_SH_PERMISSION_MODE=default' \
+  'START_SH_AGENT=codex' \
+  > ~/.config/harnessctl/config.sh
+```
+
+## Automation and agents
+
+Automation should select every behavior it depends on instead of relying on
+interactive or fleet defaults:
+
+```bash
+start codex --no-update --no-agent-update -C /workspace/project
+```
+
+Run `start doctor --json` first when an agent needs to diagnose the host.
+Treat check names as stable within the `harnessctl-doctor-v1` schema; consume
+the `status` fields rather than parsing human prose.
+
+## More documentation
+
+- [Troubleshooting and uninstall](docs/troubleshooting.md)
+- [Architecture and trust flow](docs/architecture.md)
+- [Security policy and bootstrap trust](SECURITY.md)
+- [Contributing and verification](CONTRIBUTING.md)
+- [Release operations](docs/operations/releasing.md)
+- [Changelog](CHANGELOG.md)

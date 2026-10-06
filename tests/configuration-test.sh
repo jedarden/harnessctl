@@ -9,6 +9,7 @@ cat > "$TMP/bin/agent" <<'SH'
 #!/usr/bin/env bash
 printf '%s' "${0##*/}"
 printf ' <%s>' "$@"
+printf ' pwd=<%s>' "$PWD"
 printf '\n'
 SH
 cat > "$TMP/bin/curl" <<'SH'
@@ -24,13 +25,16 @@ export HOME="$TMP/home" PATH="$TMP/bin:$PATH" HERDR_ENV=configuration-test
 unset START_SH_CONFIG START_SH_CLAUDE_MODEL START_SH_CODEX_MODEL START_SH_PERMISSION_MODE START_SH_AGENT
 
 echo 'Checking user configuration and disabled agent updates...'
+mkdir -p "$TMP/configured work"
 cat > "$HOME/.config/harnessctl/config.sh" <<'SH'
 START_SH_AGENT=claude
 START_SH_CLAUDE_MODEL='custom model'
 START_SH_PERMISSION_MODE=default
 SH
+printf 'START_SH_WORKDIR=%q\n' "$TMP/configured work" >> "$HOME/.config/harnessctl/config.sh"
 output=$("$HOME/start.sh" --no-update --no-agent-update --resume 'session with spaces' 2>&1)
 [[ "$output" == *'claude <--model> <custom model> <--resume> <session with spaces>'* ]] || fail 'Claude configuration or resume quoting failed'
+[[ "$output" == *'pwd=<'"$TMP"'/configured work>'* ]] || fail 'configured workdir was not applied to direct launch'
 [[ "$output" != *dangerously* && "$output" != *'network lookup'* ]] || fail 'permission or update configuration was ignored'
 
 cat > "$HOME/.config/harnessctl/config.sh" <<'SH'

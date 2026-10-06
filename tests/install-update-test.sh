@@ -24,6 +24,11 @@ SH
 chmod +x "$TMP/bin/"*
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+echo 'Checking installer help and environment documentation...'
+help=$(bash "$TMP/release/install.sh" --help)
+[[ "$help" == *'--script-path PATH'* && "$help" == *'START_SH_INSTALL_PATH'* ]] ||
+    fail 'installer help omitted custom destination controls'
+
 echo 'Checking authenticated install and PATH symlink with spaces...'
 bash "$TMP/release/install.sh" > "$TMP/install.log"
 cmp "$HOME/start.sh" "$TMP/release/start.sh"
@@ -56,6 +61,17 @@ if FAKE_DOWNLOAD_FAILURE=true bash "$TMP/release/install.sh" > "$TMP/error.log" 
     fail 'installer accepted an unavailable download'
 fi
 cmp "$HOME/start.sh" "$TMP/installed"
+
+echo 'Checking an unusable OpenSSL is diagnosed before installation...'
+printf '%s\n' '#!/usr/bin/env bash' 'exit 127' > "$TMP/bin/openssl"
+chmod +x "$TMP/bin/openssl"
+if bash "$TMP/release/install.sh" > "$TMP/error.log" 2>&1; then
+    fail 'installer accepted an unusable OpenSSL'
+fi
+grep -Fq 'openssl exists but cannot run; check its shared libraries' "$TMP/error.log" ||
+    fail 'installer did not explain the unusable OpenSSL failure'
+cmp "$HOME/start.sh" "$TMP/installed"
+rm "$TMP/bin/openssl"
 
 echo 'Checking installer refuses downgrades and unrelated PATH commands...'
 sed -i 's/^START_SH_VERSION=".*"$/START_SH_VERSION="99.0.0"/' "$HOME/start.sh"
