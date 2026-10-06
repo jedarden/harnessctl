@@ -66,6 +66,21 @@ Pods are garbage-collected promptly. Stream logs while the workflow is running
 or use the retained Argo UI logs. On failure, inspect failed node messages; do
 not manually publish a partially prepared artifact set.
 
+## Tag the release commit
+
+The protected workflow publishes the authenticated release commit but does not
+create its Git tag. After recording the exact release commit, add an annotated
+tag and push only that tag to Forgejo:
+
+```bash
+git tag -a v<VERSION> <RELEASE_COMMIT> -m "harnessctl v<VERSION>: <summary>"
+git push origin refs/tags/v<VERSION>
+```
+
+Never infer `<RELEASE_COMMIT>` from a moving branch after unrelated commits
+have landed. Confirm the commit subject is `release(harnessctl): v<VERSION>`
+and that its signed archive passes the checks below before tagging it.
+
 ## Verify publication
 
 After success:

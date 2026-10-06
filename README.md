@@ -28,16 +28,16 @@ The supported platform is Linux with Bash 4+, curl, OpenSSL, and GNU coreutils.
 Bare-shell launches also need tmux and git. Automatic Codex installation needs
 Node.js/npm; an already-installed Codex can run without npm.
 
-Download the bootstrap installer from the immutable v1.4.0 release commit:
+Download the installer from the immutable v1.5.0 release commit:
 
 ```bash
 curl -fsSLo /tmp/harnessctl-install.sh \
-  https://raw.githubusercontent.com/jedarden/harnessctl/f87ab1bf25a64a48320b288111c2b1e823580164/releases/v1.4.0/install.sh
+  https://raw.githubusercontent.com/jedarden/harnessctl/23d64163b2392d11b7d48ba68d3282d5676e36ec/releases/v1.5.0/install.sh
 printf '%s  %s\n' \
-  c5b54e7445c1fa9fe3b65ce1c65baec49ee4eb9706fad3829fe3dd284e33bebe \
+  fcffc267de23c95f16ec4c5d2b0434cf3b1d50af217c25b51e78c791892a7bc7 \
   /tmp/harnessctl-install.sh | sha256sum -c -
 bash /tmp/harnessctl-install.sh --source \
-  https://raw.githubusercontent.com/jedarden/harnessctl/f87ab1bf25a64a48320b288111c2b1e823580164/releases/v1.4.0
+  https://raw.githubusercontent.com/jedarden/harnessctl/23d64163b2392d11b7d48ba68d3282d5676e36ec/releases/v1.5.0
 ```
 
 The initial installer is trusted through the immutable commit and checksum
