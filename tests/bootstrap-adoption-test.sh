@@ -21,6 +21,7 @@ current=$(cat "$TMP/bootstrap/hosts/ex44/start.sh.version")
 IFS=. read -r major minor patch <<< "$current"
 next="$major.$minor.$((patch + 1))"
 cp "$ROOT/scripts/adopt-bootstrap.sh" "$TMP/release/scripts/adopt-bootstrap.sh"
+cp -a "$TMP/bootstrap" "$TMP/explicit"
 bash "$TMP/release/scripts/adopt-bootstrap.sh" "$TMP/bootstrap" "$next"
 ARTIFACT_SIGNING_KEY="$TMP/test-signing.pem" "$TMP/bootstrap/scripts/start-sh-release.sh" manifest "$next"
 "$TMP/bootstrap/scripts/start-sh-release.sh" --check > "$TMP/check.log"
@@ -41,4 +42,28 @@ echo 'Checking dirty bootstrap checkout is rejected...'
 if bash "$TMP/release/scripts/adopt-bootstrap.sh" "$TMP/bootstrap" "$major.$minor.$((patch + 2))" > "$TMP/error.log" 2>&1; then
     echo 'FAIL: adoption modified a dirty checkout' >&2; exit 1
 fi
+echo 'Checking an explicit committed version is preserved through signed adoption...'
+python3 - "$TMP/explicit" "$next" <<'PY'
+from pathlib import Path
+import re
+import sys
+host = Path(sys.argv[1]) / 'hosts/ex44'
+path = host / 'start.sh'
+path.write_text(re.sub(r'^START_SH_VERSION="[^"]+"$', f'START_SH_VERSION="{sys.argv[2]}"', path.read_text(), count=1, flags=re.M))
+(host / 'start.sh.version').write_text(sys.argv[2] + '\n')
+PY
+git -C "$TMP/explicit" add hosts/ex44/start.sh hosts/ex44/start.sh.version
+git -C "$TMP/explicit" -c user.name=jedarden -c user.email=github@jedarden.com commit -qm 'release: select explicit version'
+bash "$TMP/release/scripts/adopt-bootstrap.sh" "$TMP/explicit" "$next"
+ARTIFACT_SIGNING_KEY="$TMP/test-signing.pem" "$TMP/explicit/scripts/start-sh-release.sh" manifest "$next"
+"$TMP/explicit/scripts/start-sh-release.sh" --check > "$TMP/explicit-check.log"
+[[ "$(cat "$TMP/explicit/hosts/ex44/start.sh.version")" == "$next" ]]
+echo 'Checking unchanged and decreasing explicit versions are rejected...'
+git -C "$TMP/explicit" add hosts/ex44/start.sh hosts/ex44/start.sh.version hosts/ex44/bootstrap.sh hosts/ex44/artifact-manifest.txt hosts/ex44/artifact-manifest.sig
+git -C "$TMP/explicit" -c user.name=jedarden -c user.email=github@jedarden.com commit -qm 'test: signed adoption fixture'
+for refused in "$next" "$current"; do
+    if bash "$TMP/release/scripts/adopt-bootstrap.sh" "$TMP/explicit" "$refused" > "$TMP/refused.log" 2>&1; then
+        echo 'FAIL: adoption reused or decreased a signed version' >&2; exit 1
+    fi
+done
 echo 'Release and bootstrap adoption tests passed.'
