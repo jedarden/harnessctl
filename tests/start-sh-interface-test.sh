@@ -242,6 +242,50 @@ assert_contains \
 assert_file_not_exists "$FAKE_TMUX_LOG" \
     'resumed Claude herdr dispatch unexpectedly invoked tmux'
 
+echo 'Checking agent argument pass-through remains inert...'
+setup_case passthrough-herdr
+output=$(
+    export HOME="$CASE_HOME" PATH="$PATH_VALUE" FAKE_TMUX_LOG FAKE_AGENT_LOG
+    export HERDR_ENV=start-interface-test
+    unset TMUX
+    cd "$CALLER_DIR"
+    start codex --no-update --no-agent-update -- --search 'value; $(touch /tmp/nope)' 2>&1
+)
+assert_contains \
+    'codex <--dangerously-bypass-approvals-and-sandbox> <--search> <value; $(touch /tmp/nope)>' \
+    "$(<"$FAKE_AGENT_LOG")" 'direct pass-through arguments changed or were evaluated'
+
+setup_case passthrough-tmux
+run_start false claude --no-update --no-agent-update -- --permission-mode plan 'two words'
+assert_file_contains \
+    'unset CLAUDECODE && exec claude --dangerously-skip-permissions --model sonnet --permission-mode plan two\ words' \
+    "$FAKE_TMUX_LOG" 'tmux pass-through arguments were not shell-quoted'
+
+echo 'Checking Herdr last-session handoff...'
+setup_case resume-last
+output=$(
+    export HOME="$CASE_HOME" PATH="$PATH_VALUE" FAKE_TMUX_LOG FAKE_AGENT_LOG
+    export HERDR_ENV=start-interface-test HERDR_RESUME_AGENT=codex HERDR_RESUME_ID='last thread; inert'
+    unset TMUX START_SH_AGENT
+    cd "$CALLER_DIR"
+    start --resume last --no-update --no-agent-update 2>&1
+)
+assert_contains \
+    'codex <resume> <--dangerously-bypass-approvals-and-sandbox> <last thread; inert>' \
+    "$(<"$FAKE_AGENT_LOG")" 'Herdr resume metadata did not select and resume Codex'
+
+setup_case resume-last-missing
+if output=$(
+    export HOME="$CASE_HOME" PATH="$PATH_VALUE" FAKE_TMUX_LOG FAKE_AGENT_LOG HERDR_ENV=start-interface-test
+    unset TMUX START_SH_AGENT HERDR_RESUME_AGENT HERDR_RESUME_ID
+    cd "$CALLER_DIR"
+    start codex --resume last --no-update --no-agent-update 2>&1
+); then
+    fail 'missing Herdr resume metadata was accepted'
+fi
+assert_contains 'Herdr did not provide HERDR_RESUME_ID' "$output" \
+    'missing Herdr resume metadata was not actionable'
+
 echo 'Checking invalid agent arguments...'
 run_invalid unknown-agent nope --no-update
 assert_contains "Error: unknown agent 'nope' (expected claude or codex)" \
@@ -268,7 +312,7 @@ assert_file_not_exists "$FAKE_AGENT_LOG" \
     'missing resume value reached an agent'
 
 run_invalid json-without-doctor --json
-assert_contains 'Error: --json is only valid with start doctor' \
+assert_contains 'Error: --json is only valid with start doctor or start status' \
     "$CASE_OUTPUT" '--json was accepted without doctor'
 
 run_invalid missing-workdir claude --workdir

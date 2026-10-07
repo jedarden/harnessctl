@@ -27,13 +27,14 @@ and skipped checks. Flush the checkpoint when needed.
 
 ## Change recipes
 
-- CLI/resume/workdir: edit `start.sh`, update `usage`, README examples, and
+- CLI/resume/workdir/pass-through: edit `start.sh`, update `usage`, reference
+  and README examples, and
   `tests/start-sh-interface-test.sh`; run the real tmux test when execution
   context changes.
-- Config/default: edit `start.sh`, the README configuration table,
+- Profile/config/default: edit `start.sh`, the reference policy table,
   `tests/configuration-test.sh`, and security docs when permissions change.
-- Doctor: preserve `harnessctl-doctor-v1` compatibility, update
-  `tests/doctor-test.sh`, and document any new stable check.
+- Status/doctor: preserve the checked-in v1 JSON schemas, update
+  `tests/doctor-test.sh`, and keep changes additive within a schema version.
 - Trust/updater: edit the verifier in `start.sh`, regenerate the installer, and
   cover every failure stage in `tests/start-sh-self-update-test.sh` and
   `tests/install-update-test.sh`.
@@ -67,8 +68,9 @@ tmux runtime as an unprivileged user. When run as root it uses `runuser` and a
 disposable `/tmp` directory. Test artifacts otherwise use the physical scratch
 directory, never the repository.
 
-Publish only through declarative-config's protected
-`harnessctl-release-sign` WorkflowTemplate in `iad-ci`. Do not add GitHub
+Pushes to `main` are automatically submitted by the protected release sensor.
+Publish only through declarative-config's `harnessctl-release-sign`
+WorkflowTemplate in `iad-ci`. Do not add GitHub
 Actions, configure client-side mirror pushes, mutate ArgoCD-managed resources,
 expose credentials, or sign production artifacts with a local private key.
 Follow `docs/operations/releasing.md`, verify Forgejo and GitHub convergence,

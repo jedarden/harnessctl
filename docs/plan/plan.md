@@ -32,6 +32,8 @@ Completed implementation phases:
 5. Install and verify the released launcher and record delivery evidence on
    the owning bead. Preserve concurrent checkout edits throughout.
 
-Platform scope is Linux with Bash 4+ and GNU coreutils. macOS portability,
-additional harnesses, new signing keys, and automatic release triggers are
-future decisions rather than requirements for this extraction.
+At extraction time, the platform scope was Linux with Bash 4+ and GNU
+coreutils; macOS portability, additional harnesses, new signing keys, and
+automatic release triggers were outside that outcome. The current automated
+release behavior is documented in the release runbook rather than retrofitted
+into this historical plan.

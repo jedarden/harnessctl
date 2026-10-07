@@ -2,19 +2,33 @@
 
 ## Permission policy
 
-The default `START_SH_PERMISSION_MODE=bypass` is retained for compatibility
-with the original launcher on dedicated, single-tenant hosts. It passes
-Claude's dangerous permission-skip option or Codex's approval-and-sandbox
-bypass option. This is unsuitable for an ordinary shared or personal machine.
+Fresh installations select the `safe` profile and retain each agent's normal
+approval and sandbox behavior. Installations that predate profiles retain the
+original `bypass` default so a self-update does not silently change fleet
+behavior. The explicit `fleet` profile also passes Claude's dangerous
+permission-skip option or Codex's approval-and-sandbox bypass option. That is
+unsuitable for an ordinary shared or personal machine.
 
-Set the following before launching untrusted work:
+Set the following before launching untrusted work on a legacy host:
 
 ```bash
 START_SH_PERMISSION_MODE=default start codex
 ```
 
 Persist the setting in `~/.config/harnessctl/config.sh` when bypass is not an
-intentional host policy.
+intentional host policy, or rerun the authenticated installer with
+`--profile safe`.
+
+The profile file is non-executable data. In contrast, `config.sh` is sourced as
+arbitrary Bash before command dispatch—even for `status` and `doctor`. Treat it
+like `.bashrc`: keep it owned by the account, remove group/world write access,
+and never use a config supplied by an untrusted checkout. Doctor warns about
+unsafe ownership or modes, but inspection happens after the shell has sourced
+the selected file and is not a sandbox.
+
+Arguments following `--` and resume identifiers remain separate argv entries.
+The only shell boundary is a new tmux pane, where each entry is `%q`-escaped
+before evaluation.
 
 ## Trust model
 

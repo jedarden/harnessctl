@@ -6,19 +6,21 @@ for operator compatibility.
 
 ## Runtime flow
 
-1. Source the selected user config file and parse the command line.
-2. For an ordinary launch, fetch and authenticate signed release metadata.
+1. Read the plain profile, source the selected trusted user config file, and
+   parse the command line.
+2. For an ordinary launch, apply the resolved update policy and, when due,
+   fetch and authenticate signed release metadata.
 3. If a newer semantic version exists, download it beside the installed file,
    verify its manifest hash and embedded version, check Bash syntax, replace it
    atomically, and re-exec with the original arguments.
 4. Enter the caller/configured/CLI-selected working directory.
-5. Resolve the selected agent, optionally install or update it, and build its
-   argv without shell evaluation.
+5. Resolve the selected agent, apply its update policy, and build its argv
+   without shell evaluation. Native arguments after `--` remain array entries.
 6. In Herdr or an existing tmux client, execute the agent directly. Otherwise,
    create a NATO-named tmux session and safely quote the argv sent to its shell.
 
-`start update` stops after step 3. `start doctor` performs read-only checks and
-does not run the update or agent-update paths.
+`start update` stops after step 3. `start status` and `start doctor` do not run
+the update or agent-update paths; offline doctor also skips release metadata.
 
 ## Source and generated files
 
@@ -51,12 +53,16 @@ signing, verification, and publication run in ordered containers sharing a
 temporary workspace. Only the signing container receives an OpenBao-audience
 token, and the private key never leaves Transit.
 
-## Configuration precedence
+## Configuration and policy precedence
 
-The process environment selects `START_SH_CONFIG`. That file is then sourced,
-so assignments in it override incoming variables. CLI agent and workdir options
-override their configured equivalents. Built-in defaults apply last when no
-value is supplied.
+The process environment selects the plain profile path and `START_SH_CONFIG`.
+The profile supplies a coherent default set. The config file is then sourced,
+so assignments in it override incoming variables and profile defaults. CLI
+agent, workdir, and one-shot update switches apply last.
+
+The profile is data (`safe` or `fleet`). The config is intentionally arbitrary
+trusted Bash. Doctor inspects ownership and group/world write bits, but it
+cannot make untrusted sourced code safe.
 
 The selected working directory is one invariant across launch contexts:
 
@@ -66,8 +72,16 @@ The selected working directory is one invariant across launch contexts:
 
 ## Diagnostic contract
 
+`start status --json` returns `harnessctl-status-v1` without network access or
+mutation. It describes resolved policy and local availability, not remote
+release freshness.
+
 `start doctor --json` returns one object with schema
 `harnessctl-doctor-v1`, launcher version, aggregate readiness, warning/failure
 counts, and named checks. `pass` and `warn` do not cause a failing exit status;
 `fail` does. Optional agents and network reachability are warnings because an
 installed launcher can remain usable without them.
+
+Both schemas are checked into `docs/schemas/`. Additive fields and new named
+doctor checks are compatible within a schema version; removing or redefining a
+field requires a new schema name.

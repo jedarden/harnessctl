@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jedarden/harnessctl/blob/main/docs/schemas/harnessctl-status-v1.schema.json",
+  "title": "harnessctl status v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "version",
+    "profile",
+    "permission_mode",
+    "launcher_update_policy",
+    "agent_update_policy",
+    "agent",
+    "agent_source",
+    "context",
+    "workdir",
+    "config_path",
+    "profile_path",
+    "launcher_path",
+    "update_url",
+    "installed"
+  ],
+  "properties": {
+    "schema": { "const": "harnessctl-status-v1" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "profile": { "enum": ["safe", "fleet", "compatibility"] },
+    "permission_mode": { "enum": ["default", "bypass"] },
+    "launcher_update_policy": { "enum": ["always", "daily", "never"] },
+    "agent_update_policy": { "enum": ["always", "daily", "missing-only", "never"] },
+    "agent": { "type": ["string", "null"], "enum": ["claude", "codex", null] },
+    "agent_source": { "enum": ["config", "interactive-prompt", "noninteractive-default"] },
+    "context": { "enum": ["bare", "tmux", "herdr"] },
+    "workdir": { "type": "string" },
+    "config_path": { "type": "string" },
+    "profile_path": { "type": "string" },
+    "launcher_path": { "type": "string" },
+    "update_url": { "type": "string" },
+    "installed": {
+      "type": "object",
+      "required": ["claude", "codex"],
+      "properties": {
+        "claude": { "type": "boolean" },
+        "codex": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

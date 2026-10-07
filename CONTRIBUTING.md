@@ -29,8 +29,9 @@ Transit through the protected workflow described in
 | --- | --- | --- |
 | CLI parsing, resume, workdir | `bash tests/start-sh-interface-test.sh` | Update `--help` and README examples |
 | Real tmux execution | `bash tests/start-sh-runtime-test.sh` | Confirm both Claude and Codex cases |
-| Config variables/defaults | `bash tests/configuration-test.sh` | Update the README configuration table |
-| Doctor output/schema | `bash tests/doctor-test.sh` | Keep `harnessctl-doctor-v1` compatible or version it |
+| Config variables/defaults | `bash tests/configuration-test.sh` | Update the reference configuration table |
+| Profiles/update policies | `bash tests/configuration-test.sh` | Update reference and security docs |
+| Status or doctor JSON | `bash tests/doctor-test.sh` | Keep v1 schemas additive or version them |
 | Update/trust verification | `bash tests/start-sh-self-update-test.sh` | Regenerate the installer |
 | Installer | `bash tests/install-update-test.sh` | Regenerate the installer |
 | Release helper | `bash tests/release-test.sh` | Check archive immutability |
@@ -54,6 +55,9 @@ production signer or modify an installed launcher.
   while the manifest is still signed by the old key.
 - JSON diagnostics are an automation interface. Add fields compatibly; change
   or remove existing semantics only under a new schema name.
+- `status` and offline doctor must remain network-free in launcher-owned code.
+- A fresh install defaults to `safe`; updating an existing no-profile launcher
+  must retain compatibility behavior until the operator chooses a profile.
 
 ## Definition of done
 

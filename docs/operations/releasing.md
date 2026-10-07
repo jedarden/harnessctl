@@ -1,7 +1,8 @@
 # Release operations
 
-Production releases are prepared and signed by the protected
-`harnessctl-release-sign` WorkflowTemplate in `iad-ci`. The signer uses the
+Every non-release push to Forgejo `main` is submitted by
+`harnessctl-release-sign-sensor` to the protected `harnessctl-release-sign`
+WorkflowTemplate in `iad-ci`. The signer uses the
 non-exportable `bootstrap-signing/bootstrap-rsa-2026-10` OpenBao Transit key.
 Never export private key material or sign a production manifest locally.
 
@@ -10,8 +11,8 @@ Never export private key material or sign a production manifest locally.
 - The owning bead describes the user-visible outcome and verification.
 - The checkout is clean on `main` and pushed only to Forgejo `origin`.
 - `scripts/check.sh` passes from the exact commit being released.
-- The chosen version is strictly greater than the current release and
-  `releases/vVERSION/` does not exist.
+- The source version is unchanged for an automatic patch, or explicitly bumped
+  for a minor/major release; `releases/vVERSION/` does not exist.
 - The WorkflowTemplate is `Synced` in ArgoCD and visible in `iad-ci`.
 
 Record the exact 40-character Forgejo main commit:
@@ -22,10 +23,22 @@ scripts/check.sh
 git rev-parse HEAD
 ```
 
-## Submit
+## Version selection and submission
 
-Creating a one-shot Argo Workflow by template reference is the documented
-cluster-write exception. Do not modify the ArgoCD-managed WorkflowTemplate.
+On a normal source push, the sensor supplies the exact pushed commit. If
+`START_SH_VERSION` did not change from its parent, the protected helper selects
+the next patch. For a minor or major release, change `START_SH_VERSION` in the
+source commit and regenerate `install.sh` and `start.sh.version`; the helper
+preserves that explicit forward version.
+
+Do not run `prepare-unsigned` or sign production artifacts locally. Push the
+verified source commit and let the webhook submit it. The generated
+`ci: auto-bump version to VERSION (harnessctl)` commit is filtered by the sensor
+so it cannot recursively release itself.
+
+For recovery when webhook delivery is unavailable, creating a one-shot Argo
+Workflow by template reference is the documented cluster-write exception. Do
+not modify the ArgoCD-managed WorkflowTemplate:
 
 ```bash
 kubectl --kubeconfig=/home/coding/.kube/iad-ci.kubeconfig create -f - <<'EOF'
@@ -41,10 +54,11 @@ spec:
     parameters:
       - name: expected-commit
         value: <40-hex-forgejo-main-commit>
-      - name: version
-        value: <next-semver>
 EOF
 ```
+
+Leave `version` unset to use automatic selection. Supply it only for a
+deliberate forward version consistent with the source and release policy.
 
 The workflow fences the source commit, prepares unsigned artifacts, runs the
 complete gate, signs only the manifest in Transit, verifies and archives the
@@ -78,7 +92,8 @@ git push origin refs/tags/v<VERSION>
 ```
 
 Never infer `<RELEASE_COMMIT>` from a moving branch after unrelated commits
-have landed. Confirm the commit subject is `release(harnessctl): v<VERSION>`
+have landed. Confirm the commit subject is
+`ci: auto-bump version to VERSION (harnessctl)`
 and that its signed archive passes the checks below before tagging it.
 
 ## Verify publication

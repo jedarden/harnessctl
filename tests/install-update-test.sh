@@ -26,7 +26,8 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 echo 'Checking installer help and environment documentation...'
 help=$(bash "$TMP/release/install.sh" --help)
-[[ "$help" == *'--script-path PATH'* && "$help" == *'START_SH_INSTALL_PATH'* ]] ||
+[[ "$help" == *'--script-path PATH'* && "$help" == *'START_SH_INSTALL_PATH'* &&
+   "$help" == *'--profile PROFILE'* && "$help" == *'START_SH_INSTALL_PROFILE'* ]] ||
     fail 'installer help omitted custom destination controls'
 
 echo 'Checking authenticated install and PATH symlink with spaces...'
@@ -34,6 +35,26 @@ bash "$TMP/release/install.sh" > "$TMP/install.log"
 cmp "$HOME/start.sh" "$TMP/release/start.sh"
 [[ "$(readlink -f "$HOME/.local/bin/start")" == "$HOME/start.sh" ]] || fail 'installed link is wrong'
 [[ -x "$HOME/start.sh" ]] || fail 'launcher is not executable'
+[[ "$(<"$HOME/.config/harnessctl/profile")" == safe ]] || fail 'fresh install did not select the safe profile'
+status=$("$HOME/.local/bin/start" status --json)
+STATUS_JSON="$status" python3 - <<'PY'
+import json
+import os
+
+payload = json.loads(os.environ["STATUS_JSON"])
+assert payload["schema"] == "harnessctl-status-v1"
+assert payload["profile"] == "safe"
+assert payload["permission_mode"] == "default"
+assert payload["launcher_update_policy"] == "daily"
+assert payload["agent_update_policy"] == "missing-only"
+PY
+
+echo 'Checking reinstall preserves policy unless explicitly changed...'
+printf 'fleet\n' > "$HOME/.config/harnessctl/profile"
+bash "$TMP/release/install.sh" > "$TMP/reinstall.log"
+[[ "$(<"$HOME/.config/harnessctl/profile")" == fleet ]] || fail 'reinstall changed an existing profile'
+bash "$TMP/release/install.sh" --profile safe > "$TMP/reinstall.log"
+[[ "$(<"$HOME/.config/harnessctl/profile")" == safe ]] || fail 'explicit installer profile was ignored'
 
 echo 'Checking explicit update without agent dispatch...'
 sed -i 's/^START_SH_VERSION=".*"$/START_SH_VERSION="1.0.0"/' "$HOME/start.sh"
@@ -88,6 +109,10 @@ fi
 echo 'Checking custom deployment path and tracked-source protection...'
 bash "$TMP/release/install.sh" --script-path "$TMP/custom/start.sh" --bin-dir "$TMP/custom/bin" > "$TMP/install.log"
 cmp "$TMP/custom/start.sh" "$TMP/release/start.sh"
+bash "$TMP/release/install.sh" --script-path "$TMP/custom-profile/start.sh" \
+    --bin-dir "$TMP/custom-profile/bin" --profile fleet \
+    --profile-path "$TMP/custom-profile/profile" > "$TMP/install.log"
+[[ "$(<"$TMP/custom-profile/profile")" == fleet ]] || fail 'custom fleet profile was not written'
 git -C "$TMP/release" init -q
 git -C "$TMP/release" add start.sh
 if "$TMP/release/start.sh" update > "$TMP/error.log" 2>&1; then fail 'updater replaced tracked source'; fi

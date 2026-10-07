@@ -7,6 +7,9 @@ for path in start.sh install.sh scripts/*.sh tests/*.sh; do
     bash -n "$path"
 done
 python3 scripts/release.py parity
+for schema in docs/schemas/*.json; do
+    python3 -m json.tool "$schema" >/dev/null
+done
 bash tests/start-sh-self-update-test.sh
 bash tests/start-sh-interface-test.sh
 bash tests/doctor-test.sh

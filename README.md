@@ -1,34 +1,18 @@
 # harnessctl
 
-`harnessctl` installs the `start` command: a small Bash launcher for Claude
-Code and Codex that updates itself, resumes sessions left by Herdr, and avoids
-nesting tmux inside tmux or Herdr.
+`harnessctl` installs one command, `start`, for launching Claude Code or Codex
+consistently in a shell, tmux, or Herdr pane. It can resume sessions, keep its
+signed launcher current, and avoid nested terminal multiplexers.
 
 Forgejo is the [source of truth](https://git.ardenone.com/jedarden/harnessctl).
 GitHub is a [read-only release mirror](https://github.com/jedarden/harnessctl).
 
-## Before you run it
-
-An ordinary `start` invocation has three deliberate side effects:
-
-- It checks the configured source for a newer signed launcher. Use
-  `--no-update` for a deterministic invocation.
-- It installs or updates the selected coding agent. Use `--no-agent-update` to
-  require an already-installed agent.
-- For compatibility with the original launcher on dedicated hosts, its default
-  permission mode is `bypass`. Set `START_SH_PERMISSION_MODE=default` to retain
-  the agent's normal approval and sandbox behavior.
-
-The launcher never replaces a tracked source file, an unrelated `start`
-command, or a newer installed version.
-
 ## Install
 
-The supported platform is Linux with Bash 4+, curl, OpenSSL, and GNU coreutils.
-Bare-shell launches also need tmux and git. Automatic Codex installation needs
-Node.js/npm; an already-installed Codex can run without npm.
+Linux, Bash 4+, curl, OpenSSL, and GNU coreutils are required. A bare-shell
+launch also needs tmux and git. Automatic Codex installation needs npm.
 
-Download the installer from the immutable v1.5.0 release commit:
+Bootstrap from the immutable v1.5.0 trust release:
 
 ```bash
 curl -fsSLo /tmp/harnessctl-install.sh \
@@ -40,133 +24,108 @@ bash /tmp/harnessctl-install.sh --source \
   https://raw.githubusercontent.com/jedarden/harnessctl/23d64163b2392d11b7d48ba68d3282d5676e36ec/releases/v1.5.0
 ```
 
-The initial installer is trusted through the immutable commit and checksum
-above. Once running, its embedded public key authenticates the release
-manifest, launcher hash, and launcher version before atomically installing
-`~/start.sh` and linking `~/.local/bin/start`. The public-key DER SHA-256
-fingerprint is
-`f8e3bdf686cbdcbf5608276b2e63db734f64e9329cfaac7c12843826aee14080`.
-Obtaining this README and checksum from the same compromised channel would not
-provide independent bootstrap trust; see [SECURITY.md](SECURITY.md).
-
-If needed, add the command to your shell path:
+That pinned installer authenticates the current signed release, installs
+`~/start.sh`, and links `~/.local/bin/start`. It remains a stable bootstrap even
+as newer releases ship. If needed:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Adopt the latest signed release, then inspect the installation without changing
-it:
+A fresh install selects the `safe` profile: normal agent approvals stay on,
+the launcher checks daily, and an installed agent is not queried or upgraded.
+Reinstalling over an existing launcher preserves its policy. Dedicated fleet
+hosts can opt in explicitly:
 
 ```bash
-start update
-start doctor
+bash /tmp/harnessctl-install.sh --source URL --profile fleet
 ```
 
-Use `bash /tmp/harnessctl-install.sh --help` for custom `--script-path` and
-`--bin-dir` destinations. Their environment equivalents are
-`START_SH_INSTALL_PATH` and `START_SH_BIN_DIR`.
+See [Security](SECURITY.md) for the bootstrap trust boundary and key
+fingerprint.
 
-## Launch and resume
+## Use
 
-Run from the project directory you want the agent to use:
+Run from the project you want the agent to open:
 
 ```bash
-cd ~/projects/example
 start claude
 start codex
+start codex -C ~/projects/example
 ```
 
-When a Herdr tab exits a coding harness, copy the session identifier Herdr
-leaves in the pane and pass it back to the same harness:
+Resume an exact session ID:
 
 ```bash
 start claude --resume 4dcb6804-7929-4ae4-92c6-cb0cc43b8290
 start codex --resume 019dbf76-c928-76b3-84b9-6d8b14fdb99c
 ```
 
-Quote session names containing spaces or shell characters. `start` translates
-to the correct Claude or Codex resume syntax and preserves the argument if an
-update restarts the launcher.
-
-Use `-C` or `--workdir` when the caller is not already in the project:
+When Herdr provides its last-harness metadata, this shorter form also selects
+the recorded agent:
 
 ```bash
-start codex -C ~/projects/example
-start claude --workdir ~/projects/example --resume SESSION_ID
+start --resume last
 ```
 
-| Context | Behavior | Working directory |
-| --- | --- | --- |
-| Bare shell | Creates the first free NATO-named tmux session and attaches | Caller directory or `-C` |
-| Existing tmux | Runs the agent directly; no nested session | Caller directory or `-C` |
-| Herdr pane | Runs the agent directly and leaves multiplexing to Herdr | Caller directory or `-C` |
-
-## Command reference
-
-| Command or option | Effect |
-| --- | --- |
-| `start claude`, `start codex` | Select and launch an agent |
-| `--agent claude\|codex` | Long-form agent selection |
-| `--resume ID` | Resume a Claude or Codex session |
-| `-C DIR`, `--workdir DIR` | Launch from an explicit directory |
-| `--no-update` | Skip the launcher update check |
-| `--no-agent-update` | Do not install, update, or query the selected agent |
-| `start update` | Update only the launcher |
-| `start doctor [--json]` | Diagnose the installation; warnings do not fail |
-| `start --version` | Print the installed launcher version |
-
-`start doctor --json` emits the stable schema name `harnessctl-doctor-v1`.
-Exit status is `0` when no required check fails and `1` otherwise. Warnings,
-including an unavailable update service or an uninstalled optional agent, do
-not make the diagnostic fail.
-
-## Configuration
-
-Export variables or put assignments in
-`~/.config/harnessctl/config.sh`. The config file is sourced after incoming
-environment variables; its assignments therefore take precedence. CLI agent
-and workdir options take precedence over configuration.
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `START_SH_AGENT` | prompt, or Claude without a TTY | `claude` or `codex` |
-| `START_SH_PERMISSION_MODE` | `bypass` | `default` retains approvals/sandbox; `bypass` disables them |
-| `START_SH_CLAUDE_MODEL` | `sonnet` | Claude model argument |
-| `START_SH_CODEX_MODEL` | unset | Optional Codex model argument |
-| `START_SH_WORKDIR` | caller directory | Launch directory when `-C` is absent |
-| `START_SH_TMUX_CONF` | `~/.tmux/tmux.conf` for the default install | tmux configuration path |
-| `START_SH_UPDATE_URL` | signed GitHub mirror | Alternate signed distribution root |
-| `START_SH_CONFIG` | `$XDG_CONFIG_HOME/harnessctl/config.sh` | Alternate config file |
-
-A safer personal-host configuration is:
+Pass native agent arguments after `--`; every value remains one argument even
+through tmux:
 
 ```bash
-mkdir -p ~/.config/harnessctl
-printf '%s\n' \
-  'START_SH_PERMISSION_MODE=default' \
-  'START_SH_AGENT=codex' \
-  > ~/.config/harnessctl/config.sh
+start codex -C ~/projects/example -- --search
 ```
 
-## Automation and agents
+In a bare shell, `start` creates and attaches to the first free NATO-named tmux
+session. Inside tmux or Herdr it executes the agent directly instead of nesting
+another session. All three contexts use the caller directory unless `-C`,
+`--workdir`, or configuration selects another one.
 
-Automation should select every behavior it depends on instead of relying on
-interactive or fleet defaults:
+## Inspect and update
+
+These commands do not launch an agent:
+
+```bash
+start status
+start doctor --offline
+start doctor
+start update
+```
+
+`status` is local, read-only, and network-free. It shows the resolved profile,
+permission/update policies, execution context, paths, and installed agents.
+`doctor --offline` validates the host without checking the release service;
+plain `doctor` additionally verifies the reachable signed manifest. Use
+`--json` with either command for a stable automation interface.
+
+For a one-off deterministic launch, regardless of configured policy:
 
 ```bash
 start codex --no-update --no-agent-update -C /workspace/project
 ```
 
-Run `start doctor --json` first when an agent needs to diagnose the host.
-Treat check names as stable within the `harnessctl-doctor-v1` schema; consume
-the `status` fields rather than parsing human prose.
+## Choose a policy
 
-## More documentation
+The installer owns a plain data file at
+`~/.config/harnessctl/profile` containing `safe` or `fleet`.
 
+| Profile | Agent permissions | Launcher checks | Agent checks |
+| --- | --- | --- | --- |
+| `safe` | normal approvals/sandbox | daily | install only when missing |
+| `fleet` | bypass approvals/sandbox | every launch | every launch |
+| no profile on an older host | legacy fleet-compatible behavior | every launch | every launch |
+
+Change profiles deliberately by rerunning the authenticated installer with
+`--profile safe` or `--profile fleet`. Fine-grained overrides and the complete
+CLI are in the [reference](docs/reference.md).
+
+## Documentation
+
+- [Command and configuration reference](docs/reference.md)
+- [Automation and JSON contracts](docs/automation.md)
+- [Herdr integration](docs/herdr.md)
 - [Troubleshooting and uninstall](docs/troubleshooting.md)
 - [Architecture and trust flow](docs/architecture.md)
-- [Security policy and bootstrap trust](SECURITY.md)
-- [Contributing and verification](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
 - [Release operations](docs/operations/releasing.md)
 - [Changelog](CHANGELOG.md)

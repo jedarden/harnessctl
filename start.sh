@@ -17,7 +17,7 @@
 # Releases are signed by OpenBao Transit and distributed through the read-only
 # GitHub mirror. Install a deployed copy with install.sh; update it with
 # `start update`. Bootstrap's launcher is a compatibility snapshot.
-START_SH_VERSION="1.5.1"
+START_SH_VERSION="1.6.0"
 REPO_URL="https://raw.githubusercontent.com/jedarden/harnessctl/main"
 ARTIFACT_MANIFEST_FILE="artifact-manifest.txt"
 ARTIFACT_SIGNATURE_FILE="artifact-manifest.sig"
@@ -39,18 +39,66 @@ ARTIFACT_KEY
 ARTIFACT_TRUSTED_KEY_IDS=("$ARTIFACT_TRUSTED_KEY_ID")
 ARTIFACT_TRUSTED_PUBLIC_KEYS=("$ARTIFACT_TRUSTED_PUBLIC_KEY")
 
-# Only the user's own configuration is sourced. Values can also be exported
-# directly by the calling shell. The default preserves the fleet's behavior.
+# Only the user's own configuration is sourced. It is arbitrary Bash and must
+# be trusted like a shell startup file. Values can also be exported directly.
+# The profile is intentionally a one-word data file, not executable shell.
+# Existing deployments without one retain the original fleet-compatible
+# behavior; the installer writes "safe" for new installations.
 CALLER_WORKDIR="$(pwd -P 2>/dev/null || printf '%s' "$PWD")"
+START_SH_PROFILE_PATH="${START_SH_PROFILE_PATH:-${XDG_CONFIG_HOME:-$HOME/.config}/harnessctl/profile}"
+SELECTED_PROFILE_PATH="$START_SH_PROFILE_PATH"
+PROFILE_FILE_VALUE=""
+PROFILE_FILE_ERROR=""
+if [[ -f "$START_SH_PROFILE_PATH" ]]; then
+    mapfile -t profile_lines < "$START_SH_PROFILE_PATH"
+    if [[ ${#profile_lines[@]} -eq 1 && "${profile_lines[0]}" =~ ^(safe|fleet)$ ]]; then
+        PROFILE_FILE_VALUE="${profile_lines[0]}"
+    else
+        PROFILE_FILE_ERROR="profile must contain exactly one line: safe or fleet"
+    fi
+fi
+
 START_SH_CONFIG="${START_SH_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/harnessctl/config.sh}"
-[[ ! -f "$START_SH_CONFIG" ]] || source "$START_SH_CONFIG"
+SELECTED_CONFIG="$START_SH_CONFIG"
+[[ ! -f "$SELECTED_CONFIG" ]] || source "$SELECTED_CONFIG"
+START_SH_CONFIG="$SELECTED_CONFIG"
+START_SH_PROFILE_PATH="$SELECTED_PROFILE_PATH"
 UPDATE_REPO_URL="${START_SH_UPDATE_URL:-$REPO_URL}"
+
+if [[ -z "${START_SH_PROFILE+x}" ]]; then
+    if [[ -n "$PROFILE_FILE_VALUE" ]]; then
+        START_SH_PROFILE="$PROFILE_FILE_VALUE"
+    elif [[ -n "$PROFILE_FILE_ERROR" ]]; then
+        START_SH_PROFILE="invalid"
+    else
+        START_SH_PROFILE="compatibility"
+    fi
+fi
+case "$START_SH_PROFILE" in
+    safe)
+        START_SH_PERMISSION_MODE="${START_SH_PERMISSION_MODE:-default}"
+        START_SH_UPDATE_POLICY="${START_SH_UPDATE_POLICY:-daily}"
+        START_SH_AGENT_UPDATE_POLICY="${START_SH_AGENT_UPDATE_POLICY:-missing-only}"
+        ;;
+    fleet|compatibility)
+        START_SH_PERMISSION_MODE="${START_SH_PERMISSION_MODE:-bypass}"
+        START_SH_UPDATE_POLICY="${START_SH_UPDATE_POLICY:-always}"
+        START_SH_AGENT_UPDATE_POLICY="${START_SH_AGENT_UPDATE_POLICY:-always}"
+        ;;
+    *)
+        START_SH_PERMISSION_MODE="${START_SH_PERMISSION_MODE:-default}"
+        START_SH_UPDATE_POLICY="${START_SH_UPDATE_POLICY:-never}"
+        START_SH_AGENT_UPDATE_POLICY="${START_SH_AGENT_UPDATE_POLICY:-never}"
+        ;;
+esac
+START_SH_STATE_DIR="${START_SH_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/harnessctl}"
 
 usage() {
     cat <<'USAGE'
-Usage: start [claude|codex] [--agent claude|codex] [--resume <session>] [-C <directory>] [--no-update] [--no-agent-update]
+Usage: start [claude|codex] [--agent claude|codex] [--resume <session|last>] [-C <directory>] [--no-update] [--no-agent-update] [-- ARGS...]
        start update
-       start doctor [--json]
+       start doctor [--json] [--offline]
+       start status [--json]
        start --version | --help
 
   claude | codex   Coding agent to launch, e.g. `start codex`. Equivalent to
@@ -60,19 +108,24 @@ Usage: start [claude|codex] [--agent claude|codex] [--resume <session>] [-C <dir
                    If none of these is given and stdin is a TTY, start prompts;
                    with no TTY it defaults to claude so that scripted or
                    piped invocations never block on the prompt.
-  --resume <id>    Resume the named session. Translates to `claude --resume
-                   <id>` or `codex resume <id>` for the selected agent.
+  --resume <id>    Resume the named session. Use `last` in a Herdr pane when
+                   HERDR_RESUME_ID (and optionally HERDR_RESUME_AGENT) is set.
+                   Translates to the selected agent's native resume syntax.
   --workdir <dir>, -C <dir>
                    Launch in this directory. Defaults to the caller's current
                    directory. Also settable via START_SH_WORKDIR.
   --no-update      Skip the start self-update check.
   --no-agent-update
                    Use the installed agent without installing or updating it.
+  -- ARGS...       Pass the remaining arguments unchanged to the selected agent.
   update           Update only the launcher; do not launch or update an agent.
   doctor           Check the launcher, dependencies, configuration, agents,
                    PATH installation, and signed update source without making
                    changes. Warnings do not make the command fail.
-  --json           Emit the doctor result as one JSON object.
+  status           Show resolved policy, context, paths, and agent availability
+                   without update checks or other changes.
+  --offline        With doctor, skip the signed update-source network check.
+  --json           Emit doctor or status as one JSON object.
   --version, -v    Print the start version and exit.
   --help, -h       Show this help and exit.
 USAGE
@@ -86,11 +139,14 @@ SKIP_UPDATE=false
 SKIP_AGENT_UPDATE=false
 UPDATE_ONLY=false
 DOCTOR_ONLY=false
+STATUS_ONLY=false
 DOCTOR_JSON=false
+DOCTOR_OFFLINE=false
 AGENT=""
 POSITIONAL_AGENT=""
 RESUME_SESSION=""
 CLI_WORKDIR=""
+AGENT_EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -111,7 +167,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         update)
-            if $UPDATE_ONLY || $DOCTOR_ONLY; then
+            if $UPDATE_ONLY || $DOCTOR_ONLY || $STATUS_ONLY; then
                 echo "Error: only one command may be given" >&2
                 exit 2
             fi
@@ -119,15 +175,27 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         doctor)
-            if $UPDATE_ONLY || $DOCTOR_ONLY; then
+            if $UPDATE_ONLY || $DOCTOR_ONLY || $STATUS_ONLY; then
                 echo "Error: only one command may be given" >&2
                 exit 2
             fi
             DOCTOR_ONLY=true
             shift
             ;;
+        status)
+            if $UPDATE_ONLY || $DOCTOR_ONLY || $STATUS_ONLY; then
+                echo "Error: only one command may be given" >&2
+                exit 2
+            fi
+            STATUS_ONLY=true
+            shift
+            ;;
         --json)
             DOCTOR_JSON=true
+            shift
+            ;;
+        --offline)
+            DOCTOR_OFFLINE=true
             shift
             ;;
         --agent)
@@ -174,6 +242,11 @@ while [[ $# -gt 0 ]]; do
             fi
             shift
             ;;
+        --)
+            shift
+            AGENT_EXTRA_ARGS=("$@")
+            break
+            ;;
         claude|codex)
             if [[ -n "$POSITIONAL_AGENT" ]]; then
                 echo "Error: agent given twice: $POSITIONAL_AGENT and $1" >&2
@@ -195,16 +268,24 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if $UPDATE_ONLY && [[ -n "$AGENT$POSITIONAL_AGENT$RESUME_SESSION$CLI_WORKDIR" ]]; then
+if $UPDATE_ONLY && { [[ -n "$AGENT$POSITIONAL_AGENT$RESUME_SESSION$CLI_WORKDIR" ]] || [[ ${#AGENT_EXTRA_ARGS[@]} -gt 0 ]]; }; then
     echo "Error: start update cannot be combined with an agent, resume session, or workdir" >&2
     exit 2
 fi
-if $DOCTOR_ONLY && [[ -n "$AGENT$POSITIONAL_AGENT$RESUME_SESSION$CLI_WORKDIR" ]]; then
+if $DOCTOR_ONLY && { [[ -n "$AGENT$POSITIONAL_AGENT$RESUME_SESSION$CLI_WORKDIR" ]] || [[ ${#AGENT_EXTRA_ARGS[@]} -gt 0 ]]; }; then
     echo "Error: start doctor cannot be combined with an agent, resume session, or workdir" >&2
     exit 2
 fi
-if $DOCTOR_JSON && ! $DOCTOR_ONLY; then
-    echo "Error: --json is only valid with start doctor" >&2
+if $STATUS_ONLY && { [[ -n "$AGENT$POSITIONAL_AGENT$RESUME_SESSION$CLI_WORKDIR" ]] || [[ ${#AGENT_EXTRA_ARGS[@]} -gt 0 ]]; }; then
+    echo "Error: start status cannot be combined with an agent, resume session, workdir, or agent arguments" >&2
+    exit 2
+fi
+if $DOCTOR_JSON && ! $DOCTOR_ONLY && ! $STATUS_ONLY; then
+    echo "Error: --json is only valid with start doctor or start status" >&2
+    exit 2
+fi
+if $DOCTOR_OFFLINE && ! $DOCTOR_ONLY; then
+    echo "Error: --offline is only valid with start doctor" >&2
     exit 2
 fi
 
@@ -393,6 +474,111 @@ json_escape() {
     printf '%s' "$value"
 }
 
+inspect_file_trust() {
+    local path=$1 owner mode group_digit other_digit
+    FILE_TRUST_STATUS=pass
+    FILE_TRUST_DETAIL="$path is owned by the current user and is not group/world writable"
+    if ! owner=$(stat -c '%u' "$path" 2>/dev/null) || ! mode=$(stat -c '%a' "$path" 2>/dev/null); then
+        FILE_TRUST_STATUS=warn
+        FILE_TRUST_DETAIL="$path ownership or mode could not be inspected"
+        return
+    fi
+    if [[ "$owner" != "$(id -u)" ]]; then
+        FILE_TRUST_STATUS=warn
+        FILE_TRUST_DETAIL="$path is owned by uid $owner, not the current uid $(id -u)"
+        return
+    fi
+    group_digit=${mode: -2:1}
+    other_digit=${mode: -1}
+    if [[ "$group_digit" =~ [2367] || "$other_digit" =~ [2367] ]]; then
+        FILE_TRUST_STATUS=warn
+        FILE_TRUST_DETAIL="$path is group/world writable (mode $mode)"
+    fi
+}
+
+require_valid_settings() {
+    case "$START_SH_PROFILE" in
+        safe|fleet|compatibility) ;;
+        *) echo "Error: START_SH_PROFILE must be safe or fleet${PROFILE_FILE_ERROR:+ ($PROFILE_FILE_ERROR)}" >&2; exit 2 ;;
+    esac
+    case "$START_SH_PERMISSION_MODE" in
+        default|bypass) ;;
+        *) echo "Error: START_SH_PERMISSION_MODE must be default or bypass" >&2; exit 2 ;;
+    esac
+    case "$START_SH_UPDATE_POLICY" in
+        always|daily|never) ;;
+        *) echo "Error: START_SH_UPDATE_POLICY must be always, daily, or never" >&2; exit 2 ;;
+    esac
+    case "$START_SH_AGENT_UPDATE_POLICY" in
+        always|daily|missing-only|never) ;;
+        *) echo "Error: START_SH_AGENT_UPDATE_POLICY must be always, daily, missing-only, or never" >&2; exit 2 ;;
+    esac
+}
+
+run_status() {
+    require_valid_settings
+    local context agent_value agent_source workdir claude_installed=false codex_installed=false
+    if [[ -n "${HERDR_ENV:-}" ]]; then
+        context=herdr
+    elif [[ -n "${TMUX:-}" ]]; then
+        context=tmux
+    else
+        context=bare
+    fi
+    if [[ -n "${START_SH_AGENT:-}" ]]; then
+        case "$START_SH_AGENT" in
+            claude|codex) ;;
+            *) echo "Error: unsupported START_SH_AGENT '$START_SH_AGENT' (expected claude or codex)" >&2; return 2 ;;
+        esac
+        agent_value=$START_SH_AGENT
+        agent_source=config
+    elif [[ -t 0 ]]; then
+        agent_value=""
+        agent_source=interactive-prompt
+    else
+        agent_value=claude
+        agent_source=noninteractive-default
+    fi
+    if [[ -d "$START_SH_WORKDIR" ]]; then
+        workdir=$(cd -- "$START_SH_WORKDIR" 2>/dev/null && pwd -P) || workdir=$START_SH_WORKDIR
+    else
+        workdir=$START_SH_WORKDIR
+    fi
+    [[ ! -d "$HOME/.local/bin" ]] || export PATH="$HOME/.local/bin:$PATH"
+    [[ ! -d "$HOME/.claude/local/bin" ]] || export PATH="$HOME/.claude/local/bin:$PATH"
+    command -v claude >/dev/null 2>&1 && claude_installed=true
+    command -v codex >/dev/null 2>&1 && codex_installed=true
+
+    if $DOCTOR_JSON; then
+        local agent_json=null
+        [[ -z "$agent_value" ]] || agent_json="\"$(json_escape "$agent_value")\""
+        printf '{"schema":"harnessctl-status-v1","version":"%s","profile":"%s","permission_mode":"%s","launcher_update_policy":"%s","agent_update_policy":"%s","agent":%s,"agent_source":"%s","context":"%s","workdir":"%s","config_path":"%s","profile_path":"%s","launcher_path":"%s","update_url":"%s","installed":{"claude":%s,"codex":%s}}\n' \
+            "$(json_escape "$START_SH_VERSION")" \
+            "$(json_escape "$START_SH_PROFILE")" \
+            "$(json_escape "$START_SH_PERMISSION_MODE")" \
+            "$(json_escape "$START_SH_UPDATE_POLICY")" \
+            "$(json_escape "$START_SH_AGENT_UPDATE_POLICY")" \
+            "$agent_json" "$(json_escape "$agent_source")" "$(json_escape "$context")" \
+            "$(json_escape "$workdir")" "$(json_escape "$START_SH_CONFIG")" \
+            "$(json_escape "$START_SH_PROFILE_PATH")" "$(json_escape "$SELF_PATH")" \
+            "$(json_escape "$UPDATE_REPO_URL")" "$claude_installed" "$codex_installed"
+    else
+        printf 'start status v%s\n' "$START_SH_VERSION"
+        printf '%-23s %s\n' 'Profile' "$START_SH_PROFILE"
+        printf '%-23s %s\n' 'Permission mode' "$START_SH_PERMISSION_MODE"
+        printf '%-23s %s\n' 'Launcher update policy' "$START_SH_UPDATE_POLICY"
+        printf '%-23s %s\n' 'Agent update policy' "$START_SH_AGENT_UPDATE_POLICY"
+        printf '%-23s %s (%s)\n' 'Agent selection' "${agent_value:-prompt}" "$agent_source"
+        printf '%-23s %s\n' 'Context' "$context"
+        printf '%-23s %s\n' 'Working directory' "$workdir"
+        printf '%-23s %s\n' 'Config' "$START_SH_CONFIG"
+        printf '%-23s %s\n' 'Profile file' "$START_SH_PROFILE_PATH"
+        printf '%-23s %s\n' 'Launcher' "$SELF_PATH"
+        printf '%-23s %s\n' 'Update source' "$UPDATE_REPO_URL"
+        printf '%-23s claude=%s codex=%s\n' 'Installed agents' "$claude_installed" "$codex_installed"
+    fi
+}
+
 run_doctor() {
     local core_missing=() dependency work manifest_dir remote_version error_detail
     local path_command="" resolved_command="" permission_mode
@@ -405,7 +591,7 @@ run_doctor() {
     doctor_program curl fail curl --version
     doctor_program openssl fail openssl version
 
-    for dependency in base64 sha256sum grep sed sort head awk mktemp readlink dirname chmod mv; do
+    for dependency in base64 sha256sum grep sed sort head awk mktemp readlink dirname chmod mv stat id date; do
         command -v "$dependency" >/dev/null 2>&1 || core_missing+=("$dependency")
     done
     if [[ ${#core_missing[@]} -eq 0 ]] &&
@@ -420,12 +606,30 @@ run_doctor() {
 
     if [[ -f "$START_SH_CONFIG" ]]; then
         if bash -n "$START_SH_CONFIG" >/dev/null 2>&1; then
-            doctor_add config pass "$START_SH_CONFIG has valid Bash syntax"
+            inspect_file_trust "$START_SH_CONFIG"
+            if [[ "$FILE_TRUST_STATUS" == pass ]]; then
+                doctor_add config pass "$START_SH_CONFIG has valid Bash syntax and trusted ownership/mode"
+            else
+                doctor_add config warn "$FILE_TRUST_DETAIL; this file is sourced as arbitrary Bash"
+            fi
         else
             doctor_add config fail "$START_SH_CONFIG has invalid Bash syntax"
         fi
     else
         doctor_add config pass "no config file; built-in defaults apply"
+    fi
+
+    if [[ -f "$START_SH_PROFILE_PATH" ]]; then
+        if [[ -n "$PROFILE_FILE_ERROR" ]]; then
+            doctor_add profile fail "$START_SH_PROFILE_PATH: $PROFILE_FILE_ERROR"
+        else
+            inspect_file_trust "$START_SH_PROFILE_PATH"
+            doctor_add profile "$FILE_TRUST_STATUS" "$FILE_TRUST_DETAIL; effective profile is $START_SH_PROFILE"
+        fi
+    elif [[ "$START_SH_PROFILE" == compatibility ]]; then
+        doctor_add profile warn "no profile file; preserving legacy fleet-compatible defaults"
+    else
+        doctor_add profile pass "effective profile is $START_SH_PROFILE (profile file is absent)"
     fi
 
     if [[ -d "$START_SH_WORKDIR" ]]; then
@@ -439,11 +643,20 @@ run_doctor() {
         doctor_add workdir fail "$START_SH_WORKDIR is not a directory"
     fi
 
-    permission_mode=${START_SH_PERMISSION_MODE:-bypass}
+    permission_mode=$START_SH_PERMISSION_MODE
     case "$permission_mode" in
         default) doctor_add permissions pass "agent approval and sandbox defaults remain enabled" ;;
         bypass) doctor_add permissions warn "approval and sandbox protections are bypassed by the fleet-compatible default" ;;
         *) doctor_add permissions fail "START_SH_PERMISSION_MODE must be default or bypass" ;;
+    esac
+
+    case "$START_SH_UPDATE_POLICY" in
+        always|daily|never) doctor_add launcher-policy pass "$START_SH_UPDATE_POLICY" ;;
+        *) doctor_add launcher-policy fail "START_SH_UPDATE_POLICY must be always, daily, or never" ;;
+    esac
+    case "$START_SH_AGENT_UPDATE_POLICY" in
+        always|daily|missing-only|never) doctor_add agent-policy pass "$START_SH_AGENT_UPDATE_POLICY" ;;
+        *) doctor_add agent-policy fail "START_SH_AGENT_UPDATE_POLICY must be always, daily, missing-only, or never" ;;
     esac
 
     if command -v git >/dev/null 2>&1 &&
@@ -475,18 +688,22 @@ run_doctor() {
     doctor_program claude warn claude --version
     doctor_program codex warn codex --version
 
-    manifest_dir=$(mktemp -d "${TMPDIR:-/tmp}/harnessctl-doctor.XXXXXX" 2>/dev/null || true)
-    if [[ -z "$manifest_dir" ]]; then
-        doctor_add update-source fail "could not create a temporary verification directory"
+    if $DOCTOR_OFFLINE; then
+        doctor_add update-source warn "not checked (--offline)"
     else
-        if remote_version=$(verify_artifact_manifest "$manifest_dir" 2>"$manifest_dir/error"); then
-            doctor_add update-source pass "signed release v$remote_version is reachable and trusted"
+        manifest_dir=$(mktemp -d "${TMPDIR:-/tmp}/harnessctl-doctor.XXXXXX" 2>/dev/null || true)
+        if [[ -z "$manifest_dir" ]]; then
+            doctor_add update-source fail "could not create a temporary verification directory"
         else
-            error_detail=$(head -n 1 "$manifest_dir/error" 2>/dev/null || true)
-            [[ -n "$error_detail" ]] || error_detail="signed release metadata could not be verified"
-            doctor_add update-source warn "$error_detail"
+            if remote_version=$(verify_artifact_manifest "$manifest_dir" 2>"$manifest_dir/error"); then
+                doctor_add update-source pass "signed release v$remote_version is reachable and trusted"
+            else
+                error_detail=$(head -n 1 "$manifest_dir/error" 2>/dev/null || true)
+                [[ -n "$error_detail" ]] || error_detail="signed release metadata could not be verified"
+                doctor_add update-source warn "$error_detail"
+            fi
+            rm -rf "$manifest_dir"
         fi
-        rm -rf "$manifest_dir"
     fi
 
     if $DOCTOR_JSON; then
@@ -520,14 +737,50 @@ run_doctor() {
     (( DOCTOR_FAILURES == 0 ))
 }
 
+if $STATUS_ONLY; then
+    run_status
+    exit $?
+fi
+
 if $DOCTOR_ONLY; then
     run_doctor
     exit $?
 fi
 
+policy_check_due() {
+    local key=$1 policy=$2 timestamp_file timestamp now
+    case "$policy" in
+        always) return 0 ;;
+        never|missing-only) return 1 ;;
+        daily)
+            timestamp_file="$START_SH_STATE_DIR/$key"
+            if [[ -r "$timestamp_file" ]]; then
+                IFS= read -r timestamp < "$timestamp_file" || timestamp=""
+                if [[ "$timestamp" =~ ^[0-9]+$ ]]; then
+                    now=$(date +%s)
+                    if (( now >= timestamp && now - timestamp < 86400 )); then
+                        return 1
+                    fi
+                fi
+            fi
+            return 0
+            ;;
+    esac
+}
+
+mark_policy_checked() {
+    local key=$1 timestamp_file="$START_SH_STATE_DIR/$1"
+    mkdir -p "$START_SH_STATE_DIR" 2>/dev/null || return 0
+    (umask 077; date +%s > "$timestamp_file") 2>/dev/null || return 0
+}
+
 # Self-update function
 check_for_self_update() {
     if $SKIP_UPDATE; then
+        return 0
+    fi
+
+    if ! $UPDATE_ONLY && ! policy_check_due launcher-update "$START_SH_UPDATE_POLICY"; then
         return 0
     fi
 
@@ -598,15 +851,20 @@ check_for_self_update() {
                 return 1
             fi
 
+            mark_policy_checked launcher-update
             rm -rf "$manifest_dir"
             echo "Updated! Restarting..."
             exec "$SELF_PATH" --no-update ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}
         fi
     fi
 
+    mark_policy_checked launcher-update
     rm -rf "$manifest_dir"
 }
 
+if ! $UPDATE_ONLY; then
+    require_valid_settings
+fi
 if ! check_for_self_update; then
     $UPDATE_ONLY && exit 1
 fi
@@ -724,7 +982,6 @@ check_and_update_claude() {
     [[ -d "$HOME/.claude/local/bin" ]] && export PATH="$HOME/.claude/local/bin:$PATH"
 
     installed_version=$(get_installed_claude_version)
-    latest_version=$(get_latest_claude_version)
 
     if [[ -z "$installed_version" ]]; then
         echo "Claude Code not found. Installing..."
@@ -737,7 +994,11 @@ check_and_update_claude() {
             exit 1
         fi
         echo "Claude Code installed successfully: $(get_installed_claude_version)"
-    elif [[ -z "$latest_version" ]]; then
+        return 0
+    fi
+
+    latest_version=$(get_latest_claude_version)
+    if [[ -z "$latest_version" ]]; then
         echo "Warning: Could not fetch latest Claude Code version. Skipping update check."
         echo "Current version: $installed_version"
     elif version_lt "$installed_version" "$latest_version"; then
@@ -788,7 +1049,6 @@ check_and_update_codex() {
     [[ -d "$HOME/.local/bin" ]] && export PATH="$HOME/.local/bin:$PATH"
 
     installed_version=$(get_installed_codex_version)
-    latest_version=$(get_latest_codex_version)
 
     if [[ -z "$installed_version" ]]; then
         echo "Codex CLI not found. Installing..."
@@ -799,7 +1059,11 @@ check_and_update_codex() {
             exit 1
         fi
         echo "Codex CLI installed successfully: $(get_installed_codex_version)"
-    elif [[ -z "$latest_version" ]]; then
+        return 0
+    fi
+
+    latest_version=$(get_latest_codex_version)
+    if [[ -z "$latest_version" ]]; then
         echo "Warning: Could not fetch latest Codex CLI version. Skipping update check."
         echo "Current version: $installed_version"
     elif version_lt "$installed_version" "$latest_version"; then
@@ -880,25 +1144,43 @@ resolve_agent() {
 }
 
 check_and_update_agent() {
-    if $SKIP_AGENT_UPDATE; then
-        [[ ! -d "$HOME/.local/bin" ]] || export PATH="$HOME/.local/bin:$PATH"
+    local policy=$START_SH_AGENT_UPDATE_POLICY
+    [[ ! -d "$HOME/.local/bin" ]] || export PATH="$HOME/.local/bin:$PATH"
+    [[ ! -d "$HOME/.claude/local/bin" ]] || export PATH="$HOME/.claude/local/bin:$PATH"
+    $SKIP_AGENT_UPDATE && policy=never
+
+    if [[ "$policy" == never ]]; then
         if ! command -v "$AGENT" >/dev/null 2>&1; then
-            echo "Error: $AGENT is not installed (--no-agent-update was requested)" >&2
+            if $SKIP_AGENT_UPDATE; then
+                echo "Error: $AGENT is not installed (--no-agent-update was requested)" >&2
+            else
+                echo "Error: $AGENT is not installed (agent update policy is never)" >&2
+            fi
             exit 1
         fi
         return 0
     fi
+
+    if [[ "$policy" == missing-only ]] && command -v "$AGENT" >/dev/null 2>&1; then
+        return 0
+    fi
+    if [[ "$policy" == daily ]] && command -v "$AGENT" >/dev/null 2>&1 &&
+        ! policy_check_due "agent-$AGENT-update" daily; then
+        return 0
+    fi
+
     case "$AGENT" in
         claude) check_and_update_claude ;;
         codex)  check_and_update_codex ;;
     esac
+    [[ "$policy" != daily ]] || mark_policy_checked "agent-$AGENT-update"
 }
 
-# Launch argv for the selected agent. Both run with their approval prompts
-# disabled, matching what this launcher has always done for Claude Code -
-# these are dedicated single-tenant boxes reached only over Tailscale.
+# Launch argv for the selected agent. The effective permission mode comes from
+# the chosen profile or an explicit override; fleet/compatibility mode retains
+# the historical bypass flags while safe mode keeps agent protections enabled.
 set_agent_argv() {
-    local permission_mode="${START_SH_PERMISSION_MODE:-bypass}"
+    local permission_mode="$START_SH_PERMISSION_MODE"
     case "$permission_mode" in
         default|bypass) ;;
         *) echo "Error: START_SH_PERMISSION_MODE must be default or bypass" >&2; exit 1 ;;
@@ -908,6 +1190,7 @@ set_agent_argv() {
             AGENT_ARGV=(claude)
             [[ "$permission_mode" != bypass ]] || AGENT_ARGV+=(--dangerously-skip-permissions)
             AGENT_ARGV+=(--model "${START_SH_CLAUDE_MODEL:-sonnet}")
+            AGENT_ARGV+=("${AGENT_EXTRA_ARGS[@]}")
             if [[ -n "$RESUME_SESSION" ]]; then
                 AGENT_ARGV+=(--resume "$RESUME_SESSION")
             fi
@@ -920,11 +1203,39 @@ set_agent_argv() {
             fi
             [[ "$permission_mode" != bypass ]] || AGENT_ARGV+=(--dangerously-bypass-approvals-and-sandbox)
             [[ -z "${START_SH_CODEX_MODEL:-}" ]] || AGENT_ARGV+=(--model "$START_SH_CODEX_MODEL")
+            AGENT_ARGV+=("${AGENT_EXTRA_ARGS[@]}")
             [[ -z "$RESUME_SESSION" ]] || AGENT_ARGV+=("$RESUME_SESSION")
             ;;
     esac
 }
 
+resolve_resume_session() {
+    [[ "$RESUME_SESSION" == last ]] || return 0
+    if [[ -z "${HERDR_ENV:-}" ]]; then
+        echo "Error: --resume last is only available inside Herdr; pass --resume ID" >&2
+        exit 2
+    fi
+    if [[ -z "${HERDR_RESUME_ID:-}" ]]; then
+        echo "Error: Herdr did not provide HERDR_RESUME_ID; copy the session ID and pass --resume ID" >&2
+        exit 2
+    fi
+    if [[ -n "${HERDR_RESUME_AGENT:-}" ]]; then
+        if ! validate_agent "$HERDR_RESUME_AGENT"; then
+            echo "Error: Herdr provided unsupported HERDR_RESUME_AGENT '$HERDR_RESUME_AGENT'" >&2
+            exit 2
+        fi
+        if [[ -z "$AGENT" && -z "${START_SH_AGENT:-}" ]]; then
+            AGENT=$HERDR_RESUME_AGENT
+        elif [[ -n "$AGENT" && "$AGENT" != "$HERDR_RESUME_AGENT" ]] ||
+            [[ -z "$AGENT" && -n "${START_SH_AGENT:-}" && "$START_SH_AGENT" != "$HERDR_RESUME_AGENT" ]]; then
+            echo "Error: selected agent conflicts with Herdr's $HERDR_RESUME_AGENT resume session" >&2
+            exit 2
+        fi
+    fi
+    RESUME_SESSION=$HERDR_RESUME_ID
+}
+
+resolve_resume_session
 resolve_agent
 check_and_update_agent
 set_agent_argv

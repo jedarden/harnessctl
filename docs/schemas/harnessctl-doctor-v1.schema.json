@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jedarden/harnessctl/blob/main/docs/schemas/harnessctl-doctor-v1.schema.json",
+  "title": "harnessctl doctor v1",
+  "type": "object",
+  "required": ["schema", "version", "ok", "warnings", "failures", "checks"],
+  "properties": {
+    "schema": { "const": "harnessctl-doctor-v1" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "ok": { "type": "boolean" },
+    "warnings": { "type": "integer", "minimum": 0 },
+    "failures": { "type": "integer", "minimum": 0 },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "status", "detail"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["pass", "warn", "fail"] },
+          "detail": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}
