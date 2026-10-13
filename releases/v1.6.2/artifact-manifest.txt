@@ -1,0 +1,6 @@
+format=harnessctl-artifacts-v1
+key_id=bootstrap-rsa-2026-10
+version=1.6.2
+artifact=start.sh 9a51e75c77f862ec45e9e67008baa0bbe6726c2b267ef65a595574be26b075ed
+artifact=install.sh 8f676926645056a8a8c92e4b2963e75865d7f205a99cc857a6123c17f257136e
+artifact=start.sh.version a2d5e268fe70979caccd895156b3d33bd61a3cc7e660ab7a5b07066849b3e248
