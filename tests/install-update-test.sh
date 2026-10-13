@@ -24,6 +24,65 @@ SH
 chmod +x "$TMP/bin/"*
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+echo 'Checking an overlap launcher trusts releases signed by either key...'
+cp "$TMP/release/start.sh" "$TMP/old-only-start.sh"
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+    -out "$TMP/next-signing.pem" >/dev/null 2>&1
+openssl pkey -in "$TMP/next-signing.pem" -pubout -out "$TMP/next-signing.pub"
+python3 - "$TMP/release/start.sh" "$TMP/next-signing.pub" <<'PY'
+from pathlib import Path
+import sys
+
+launcher = Path(sys.argv[1])
+public_key = Path(sys.argv[2]).read_text().strip()
+old = 'ARTIFACT_TRUSTED_PUBLIC_KEYS=("$ARTIFACT_TRUSTED_PUBLIC_KEY")\n'
+assert launcher.read_text().count(old) == 1
+overlap = (
+    old + "ARTIFACT_NEXT_PUBLIC_KEY=$(cat <<'ARTIFACT_NEXT_KEY'\n"
+    + public_key + "\nARTIFACT_NEXT_KEY\n)\n"
+    + 'ARTIFACT_TRUSTED_KEY_IDS+=("fixture-next")\n'
+    + 'ARTIFACT_TRUSTED_PUBLIC_KEYS+=("$ARTIFACT_NEXT_PUBLIC_KEY")\n'
+)
+launcher.write_text(launcher.read_text().replace(old, overlap, 1))
+PY
+python3 "$TMP/release/scripts/release.py" generate
+python3 - "$TMP/release" <<'PY'
+import importlib.util
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location('release', root / 'scripts/release.py')
+release = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(release)
+(root / 'artifact-manifest.txt').write_text(release.manifest(root))
+PY
+python3 "$TMP/release/scripts/release.py" sign --key "$TMP/test-signing.pem"
+cp "$TMP/release/start.sh" "$TMP/overlap-start.sh"
+mkdir "$TMP/release-next"
+sed 's/^key_id=fixture-test$/key_id=fixture-next/' \
+    "$TMP/release/artifact-manifest.txt" > "$TMP/release-next/artifact-manifest.txt"
+{
+    printf '%s\n' 'key_id=fixture-next'
+    printf 'signature='
+    openssl dgst -sha256 -sign "$TMP/next-signing.pem" \
+        "$TMP/release-next/artifact-manifest.txt" | base64 -w 0
+    printf '\n'
+} > "$TMP/release-next/artifact-manifest.sig"
+for release in "$TMP/release" "$TMP/release-next"; do
+    if ! FAKE_RELEASE="$release" START_SH_UPDATE_URL=https://fixture.invalid \
+        "$TMP/overlap-start.sh" update > "$TMP/overlap.log" 2>&1; then
+        cat "$TMP/overlap.log" >&2
+        fail "overlap launcher rejected the release from $release"
+    fi
+done
+if FAKE_RELEASE="$TMP/release-next" START_SH_UPDATE_URL=https://fixture.invalid \
+    "$TMP/old-only-start.sh" update > "$TMP/overlap.log" 2>&1; then
+    fail 'old-only launcher accepted the new signing key'
+fi
+grep -Fq "release key 'fixture-next' is not trusted" "$TMP/overlap.log" ||
+    fail 'old-only launcher did not reject the new key ID'
+
 echo 'Checking installer help and environment documentation...'
 help=$(bash "$TMP/release/install.sh" --help)
 [[ "$help" == *'--script-path PATH'* && "$help" == *'START_SH_INSTALL_PATH'* &&

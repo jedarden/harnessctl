@@ -5,6 +5,8 @@ Every non-release push to Forgejo `main` is submitted by
 WorkflowTemplate in `iad-ci`. The signer uses the
 non-exportable `bootstrap-signing/bootstrap-rsa-2026-10` OpenBao Transit key.
 Never export private key material or sign a production manifest locally.
+For a signer change, follow [key-rotation.md](key-rotation.md) before switching
+the protected workflow's Transit key.
 
 ## Prerequisites
 
