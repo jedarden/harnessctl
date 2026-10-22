@@ -153,7 +153,7 @@ run_tmux_case() {
         cd "$CASE_WORKDIR"
         # tmux attach-session requires a controlling terminal. `script`
         # supplies one without coupling the test to the caller's terminal.
-        script -qefc "start $agent --resume $resume_id --no-update" /dev/null
+        script -qefc "start $agent resume $resume_id --no-update" /dev/null
     ) > "$CASE_OUTPUT" 2>&1 &
     local start_pid=$!
     local runtime_line="phase=runtime agent=$agent uid=$TEST_UID pwd=$CASE_WORKDIR args=$expected_args"

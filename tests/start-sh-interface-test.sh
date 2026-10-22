@@ -242,6 +242,40 @@ assert_contains \
 assert_file_not_exists "$FAKE_TMUX_LOG" \
     'resumed Claude herdr dispatch unexpectedly invoked tmux'
 
+echo 'Checking positional resume aliases...'
+setup_case codex-positional-resume-tmux
+EXPLICIT_DIR="$CALLER_DIR/selected work"
+mkdir -p "$EXPLICIT_DIR"
+run_start false codex resume 'thread name; still-one-argument' -C 'selected work' \
+    --no-update --no-agent-update -- --search 'two words'
+assert_file_contains \
+    'unset CLAUDECODE && exec codex resume --dangerously-bypass-approvals-and-sandbox --search two\ words thread\ name\;\ still-one-argument' \
+    "$FAKE_TMUX_LOG" 'positional Codex resume or pass-through arguments changed through tmux'
+assert_file_contains \
+    'tmux <-f> <'"$CASE_HOME"'/.tmux/tmux.conf> <new-session> <-d> <-s> <alpha> <-c> <'"$EXPLICIT_DIR"'>' \
+    "$FAKE_TMUX_LOG" 'positional resume did not preserve workdir selection'
+
+setup_case claude-positional-resume-herdr
+printf -v RESUME_ID 'thread name; $(touch %q)' "$CASE_ROOT/injected"
+run_start true claude resume "$RESUME_ID" --no-update --no-agent-update
+assert_contains \
+    "claude <--dangerously-skip-permissions> <--model> <sonnet> <--resume> <$RESUME_ID>" \
+    "$(<"$FAKE_AGENT_LOG")" 'positional Claude resume ID changed or split into multiple arguments'
+assert_file_not_exists "$CASE_ROOT/injected" 'positional resume ID was evaluated'
+assert_file_not_exists "$FAKE_TMUX_LOG" 'positional Herdr resume unexpectedly invoked tmux'
+
+setup_case default-positional-resume
+run_start true resume default-session --no-update --no-agent-update
+assert_contains \
+    'claude <--dangerously-skip-permissions> <--model> <sonnet> <--resume> <default-session>' \
+    "$(<"$FAKE_AGENT_LOG")" 'positional resume without an agent did not use the normal default'
+
+setup_case flag-agent-positional-resume
+run_start true --agent codex resume codex-session --no-update --no-agent-update
+assert_contains \
+    'codex <resume> <--dangerously-bypass-approvals-and-sandbox> <codex-session>' \
+    "$(<"$FAKE_AGENT_LOG")" 'positional resume did not honor --agent'
+
 echo 'Checking agent argument pass-through remains inert...'
 setup_case passthrough-herdr
 output=$(
@@ -268,7 +302,7 @@ output=$(
     export HERDR_ENV=start-interface-test HERDR_RESUME_AGENT=codex HERDR_RESUME_ID='last thread; inert'
     unset TMUX START_SH_AGENT
     cd "$CALLER_DIR"
-    start --resume last --no-update --no-agent-update 2>&1
+    start resume last --no-update --no-agent-update 2>&1
 )
 assert_contains \
     'codex <resume> <--dangerously-bypass-approvals-and-sandbox> <last thread; inert>' \
@@ -310,6 +344,21 @@ assert_contains 'Error: --resume requires a session ID or name' \
     "$CASE_OUTPUT" 'missing resume value was accepted'
 assert_file_not_exists "$FAKE_AGENT_LOG" \
     'missing resume value reached an agent'
+
+for agent in claude codex; do
+    run_invalid "$agent-positional-resume-missing" "$agent" resume
+    assert_contains 'Error: resume requires a session ID or name' \
+        "$CASE_OUTPUT" 'missing positional resume value was accepted'
+    assert_file_not_exists "$FAKE_AGENT_LOG" 'missing positional resume value reached an agent'
+    assert_file_not_exists "$FAKE_TMUX_LOG" 'missing positional resume value reached tmux'
+done
+for value in '' --no-update --; do
+    run_invalid "positional-resume-invalid-value-${value:-empty}" resume "$value"
+    assert_contains 'Error: resume requires a session ID or name' \
+        "$CASE_OUTPUT" 'empty or option-like positional resume value was accepted'
+    assert_file_not_exists "$FAKE_AGENT_LOG" 'invalid positional resume value reached an agent'
+    assert_file_not_exists "$FAKE_TMUX_LOG" 'invalid positional resume value reached tmux'
+done
 
 run_invalid json-without-doctor --json
 assert_contains 'Error: --json is only valid with start doctor or start status' \

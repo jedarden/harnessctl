@@ -4,6 +4,7 @@
 
 ```text
 start [claude|codex] [OPTIONS] [-- AGENT_ARGS...]
+start [claude|codex] resume ID [OPTIONS] [-- AGENT_ARGS...]
 start update
 start status [--json]
 start doctor [--json] [--offline]
@@ -14,8 +15,8 @@ start --version
 | --- | --- |
 | `claude`, `codex` | Select the coding agent |
 | `--agent NAME` | Long-form agent selection |
-| `--resume ID` | Resume an exact Claude or Codex session |
-| `--resume last` | Consume `HERDR_RESUME_ID` and optional `HERDR_RESUME_AGENT` |
+| `resume ID`, `--resume ID` | Resume an exact Claude or Codex session using the selected agent |
+| `resume last`, `--resume last` | Consume `HERDR_RESUME_ID` and optional `HERDR_RESUME_AGENT` |
 | `-C DIR`, `--workdir DIR` | Select the launch directory |
 | `--no-update` | Skip launcher update work for this invocation |
 | `--no-agent-update` | Require an installed agent without querying or changing it |

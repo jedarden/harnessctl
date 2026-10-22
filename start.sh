@@ -96,6 +96,7 @@ START_SH_STATE_DIR="${START_SH_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/
 usage() {
     cat <<'USAGE'
 Usage: start [claude|codex] [--agent claude|codex] [--resume <session|last>] [-C <directory>] [--no-update] [--no-agent-update] [-- ARGS...]
+       start [claude|codex] resume <session|last> [OPTIONS] [-- ARGS...]
        start update
        start doctor [--json] [--offline]
        start status [--json]
@@ -108,7 +109,8 @@ Usage: start [claude|codex] [--agent claude|codex] [--resume <session|last>] [-C
                    If none of these is given and stdin is a TTY, start prompts;
                    with no TTY it defaults to claude so that scripted or
                    piped invocations never block on the prompt.
-  --resume <id>    Resume the named session. Use `last` in a Herdr pane when
+  resume <id>, --resume <id>
+                   Resume the named session. Use `last` in a Herdr pane when
                    HERDR_RESUME_ID (and optionally HERDR_RESUME_AGENT) is set.
                    Translates to the selected agent's native resume syntax.
   --workdir <dir>, -C <dir>
@@ -210,9 +212,9 @@ while [[ $# -gt 0 ]]; do
             AGENT="${1#--agent=}"
             shift
             ;;
-        --resume)
+        resume|--resume)
             if [[ -z "${2:-}" || "$2" == -* ]]; then
-                echo "Error: --resume requires a session ID or name" >&2
+                echo "Error: $1 requires a session ID or name" >&2
                 exit 1
             fi
             RESUME_SESSION="$2"

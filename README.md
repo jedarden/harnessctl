@@ -57,15 +57,18 @@ start codex -C ~/projects/example
 Resume an exact session ID:
 
 ```bash
-start claude --resume 4dcb6804-7929-4ae4-92c6-cb0cc43b8290
-start codex --resume 019dbf76-c928-76b3-84b9-6d8b14fdb99c
+start claude resume 4dcb6804-7929-4ae4-92c6-cb0cc43b8290
+start codex resume 019dbf76-c928-76b3-84b9-6d8b14fdb99c
 ```
+
+`start resume ID` uses the usual agent selection. The `--resume ID` option
+remains supported as an equivalent form.
 
 When Herdr provides its last-harness metadata, this shorter form also selects
 the recorded agent:
 
 ```bash
-start --resume last
+start resume last
 ```
 
 Pass native agent arguments after `--`; every value remains one argument even
