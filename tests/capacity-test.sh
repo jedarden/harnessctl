@@ -62,14 +62,23 @@ start() {
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
 json=$(start status --json)
-STATUS_JSON="$json" python3 - <<'PY'
+if command -v jq >/dev/null 2>&1; then
+    expect_enrichment=true
+else
+    expect_enrichment=false
+fi
+STATUS_JSON="$json" EXPECT_ENRICHMENT="$expect_enrichment" python3 - <<'PY'
 import json, os
 payload = json.loads(os.environ['STATUS_JSON'])
 host = payload['host']
 assert host['inventory']['complete'] is True
 assert host['inventory']['counts'] == {'claude': 1, 'codex': 1, 'total': 2}
 assert {item['pid'] for item in host['inventory']['agents']} == {101, 102}
-assert next(item for item in host['inventory']['agents'] if item['pid'] == 101)['session_id'] == 'live-session'
+claude = next(item for item in host['inventory']['agents'] if item['pid'] == 101)
+if os.environ['EXPECT_ENRICHMENT'] == 'true':
+    assert claude['session_id'] == 'live-session'
+else:
+    assert 'session_id' not in claude
 assert 'session_id' not in next(item for item in host['inventory']['agents'] if item['pid'] == 102)
 assert host['capacity'] == {
     'ready': False, 'reason': 'cpu', 'cpu_millicores': 2000,
