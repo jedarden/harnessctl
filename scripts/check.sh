@@ -15,6 +15,7 @@ bash tests/start-sh-interface-test.sh
 bash tests/doctor-test.sh
 bash tests/install-update-test.sh
 bash tests/configuration-test.sh
+bash tests/capacity-test.sh
 bash tests/release-test.sh
 if [[ -n "${BOOTSTRAP_SOURCE:-}" ]]; then
     bash tests/bootstrap-adoption-test.sh

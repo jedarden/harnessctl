@@ -28,12 +28,20 @@ at the tmux boundary. Do not pre-quote individual argument values.
 `harnessctl-status-v1` object and returns nonzero for invalid configuration.
 
 ```bash
-start status --json | jq '{profile, permission_mode, context, installed}'
+start status --json | jq '{profile, permission_mode, context, installed, host}'
 ```
 
 The checked-in [status schema](schemas/harnessctl-status-v1.schema.json)
 defines required fields and enums. Within v1, fields may be added but existing
 fields are not removed or redefined.
+`host.inventory.agents` lists live agent PIDs and UIDs without command
+arguments. A `session_id` appears only when an existing CCDash hook record
+matches the live process and its start time. `host.capacity` reports effective
+CPU, one-minute CPU load (both in millicores), available memory, and the N+1
+launch decision and limiting
+reason (`ready`, `cpu`, `memory`, `metrics-unavailable`, or
+`inventory-unavailable`; `disabled` when the policy is off). A false `ready`
+prevents launch unless the operator supplies `--force-capacity`.
 
 ## Diagnostics
 

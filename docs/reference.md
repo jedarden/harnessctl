@@ -20,6 +20,7 @@ start --version
 | `-C DIR`, `--workdir DIR` | Select the launch directory |
 | `--no-update` | Skip launcher update work for this invocation |
 | `--no-agent-update` | Require an installed agent without querying or changing it |
+| `--force-capacity` | Override a failed or unavailable N+1 capacity check for one launch |
 | `-- AGENT_ARGS...` | Pass every remaining argument unchanged to the agent |
 | `update` | Check and update the signed launcher, then exit |
 | `status` | Report resolved local state without network or changes |
@@ -82,9 +83,45 @@ CLI agent and workdir options override both.
 | `START_SH_UPDATE_URL` | signed GitHub mirror | Alternate signed artifact root |
 | `START_SH_STATE_DIR` | `${XDG_STATE_HOME:-$HOME/.local/state}/harnessctl` | Daily-check timestamps |
 | `START_SH_CONFIG` | default config path | Select the sourced config file |
+| `START_SH_CAPACITY_POLICY` | `enforce` (default), `off` | Require or disable the prelaunch capacity decision |
+| `START_SH_AGENT_CPU_MILLICORES` | `1000` | CPU headroom required for the proposed agent |
+| `START_SH_CPU_RESERVE_MILLICORES` | `0` | Extra CPU budget reserved for non-agent work |
+| `START_SH_AGENT_MEMORY_MIB` | `1024` | Memory required for the proposed agent |
+| `START_SH_MEMORY_RESERVE_MIB` | `512` | Memory kept free after the proposed launch |
 
 `START_SH_PROFILE_PATH` selects the plain profile file before configuration is
 sourced, so set it in the process environment rather than `config.sh`.
+
+## Host inventory and launch capacity
+
+`start status` scans live `/proc` processes across users and launch methods.
+It counts exact `claude` and `codex` executables and the npm Node entrypoints
+for those agents. Zombies, kernel threads, launcher shells, similarly named
+helpers, and service modes such as `codex app-server` are excluded. The JSON `host.inventory` field gives PID, UID, agent,
+counts, and whether the scan was complete; it does not expose command arguments.
+When CCDash's existing SessionStart registry is available, a matching live PID
+may also carry `session_id`. The launcher checks the agent type and process
+start time before attaching that identity. Stale registry records do not count
+as running agents, and agents without hooks remain visible through `/proc`.
+
+Before dispatch, the launcher takes a fresh snapshot. It requires the host's
+one-minute load average plus the proposed agent's CPU budget and configured
+reserve to fit the effective CPU capacity. That capacity is the smallest
+of online CPUs, process affinity, and available cgroup v2 quota/cpuset limits.
+It also requires the proposed agent's memory budget plus the reserve to fit
+the smaller of host `MemAvailable` and remaining cgroup v2 memory limits.
+These are planning budgets, not measured per-process usage. By default a new
+launch needs one CPU of headroom and 1 GiB plus 512 MiB free.
+The load average is host-wide; for a small CPU-limited cgroup, unrelated host
+load can make this check conservatively refuse a launch. Use the one-off
+override after inspecting that cgroup's own utilization.
+Unknown required metrics or an incomplete process scan refuse a launch. The
+status command still succeeds and reports `host.capacity.ready=false` with a
+reason. `--force-capacity` permits one launch after a failed check;
+`START_SH_CAPACITY_POLICY=off` disables enforcement for a trusted host policy.
+The snapshot is point-in-time and concurrent launches can race.
+If the cgroup v2 mount or current cgroup cannot be inspected, the metrics are
+treated as unavailable; cgroup v1 limits are not interpreted.
 
 Example personal-host configuration:
 

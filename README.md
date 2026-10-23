@@ -95,7 +95,10 @@ start update
 ```
 
 `status` is local, read-only, and network-free. It shows the resolved profile,
-permission/update policies, execution context, paths, and installed agents.
+permission/update policies, execution context, paths, installed agents, and a
+host-wide inventory of running Claude and Codex processes. It also reports
+whether CPU and memory headroom permit one more agent. Ordinary launches check
+that headroom; `--force-capacity` overrides a failed check once.
 `doctor --offline` validates the host without checking the release service;
 plain `doctor` additionally verifies the reachable signed manifest. Use
 `--json` with either command for a stable automation interface.

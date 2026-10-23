@@ -128,6 +128,9 @@ assert payload["context"] == "bare"
 assert payload["workdir"] == os.environ["CALLER_DIR"]
 assert payload["config_path"] == os.environ["CONFIG"]
 assert set(payload["installed"]) == {"claude", "codex"}
+assert set(payload["host"]) == {"inventory", "capacity"}
+assert payload["host"]["inventory"]["counts"]["total"] == len(payload["host"]["inventory"]["agents"])
+assert isinstance(payload["host"]["capacity"]["ready"], bool)
 PY
 
 echo 'Checking sourced-file mode warnings...'

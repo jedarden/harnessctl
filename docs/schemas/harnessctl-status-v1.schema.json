@@ -43,6 +43,57 @@
         "codex": { "type": "boolean" }
       },
       "additionalProperties": true
+    },
+    "host": {
+      "type": "object",
+      "required": ["inventory", "capacity"],
+      "properties": {
+        "inventory": {
+          "type": "object",
+          "required": ["complete", "counts", "agents"],
+          "properties": {
+            "complete": { "type": "boolean" },
+            "counts": {
+              "type": "object",
+              "required": ["claude", "codex", "total"],
+              "properties": {
+                "claude": { "type": "integer", "minimum": 0 },
+                "codex": { "type": "integer", "minimum": 0 },
+                "total": { "type": "integer", "minimum": 0 }
+              },
+              "additionalProperties": true
+            },
+            "agents": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["pid", "uid", "agent"],
+                "properties": {
+                  "pid": { "type": "integer", "minimum": 1 },
+                  "uid": { "type": "string" },
+                  "agent": { "enum": ["claude", "codex"] },
+                  "session_id": { "type": "string" }
+                },
+                "additionalProperties": true
+              }
+            }
+          },
+          "additionalProperties": true
+        },
+        "capacity": {
+          "type": "object",
+          "required": ["ready", "reason", "cpu_millicores", "cpu_load_millicores", "memory_available_bytes"],
+          "properties": {
+            "ready": { "type": "boolean" },
+            "reason": { "enum": ["ready", "disabled", "cpu", "memory", "metrics-unavailable", "inventory-unavailable"] },
+            "cpu_millicores": { "type": "integer", "minimum": 0 },
+            "cpu_load_millicores": { "type": "integer", "minimum": 0 },
+            "memory_available_bytes": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
     }
   },
   "additionalProperties": true

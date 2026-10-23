@@ -14,9 +14,12 @@ for operator compatibility.
    verify its manifest hash and embedded version, check Bash syntax, replace it
    atomically, and re-exec with the original arguments.
 4. Enter the caller/configured/CLI-selected working directory.
-5. Resolve the selected agent, apply its update policy, and build its argv
-   without shell evaluation. Native arguments after `--` remain array entries.
-6. In Herdr or an existing tmux client, execute the agent directly. Otherwise,
+5. Resolve the selected agent, inventory live agents across the host, and check
+   effective CPU and memory headroom for one more launch. Existing CCDash hook
+   records may add session IDs, but process liveness determines the count.
+6. Apply the agent update policy and build its argv without shell evaluation.
+   Native arguments after `--` remain array entries.
+7. In Herdr or an existing tmux client, execute the agent directly. Otherwise,
    create a NATO-named tmux session and safely quote the argv sent to its shell.
 
 `start update` stops after step 3. `start status` and `start doctor` do not run

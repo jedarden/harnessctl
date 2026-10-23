@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+export START_SH_CAPACITY_POLICY=off # Updater cases do not model host load.
 
 # Exercise start.sh's self-update path with local command doubles. The real
 # launcher is copied into a disposable HOME so every case can inspect whether

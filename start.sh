@@ -95,7 +95,7 @@ START_SH_STATE_DIR="${START_SH_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/
 
 usage() {
     cat <<'USAGE'
-Usage: start [claude|codex] [--agent claude|codex] [--resume <session|last>] [-C <directory>] [--no-update] [--no-agent-update] [-- ARGS...]
+Usage: start [claude|codex] [--agent claude|codex] [--resume <session|last>] [-C <directory>] [--no-update] [--no-agent-update] [--force-capacity] [-- ARGS...]
        start [claude|codex] resume <session|last> [OPTIONS] [-- ARGS...]
        start update
        start doctor [--json] [--offline]
@@ -119,12 +119,13 @@ Usage: start [claude|codex] [--agent claude|codex] [--resume <session|last>] [-C
   --no-update      Skip the start self-update check.
   --no-agent-update
                    Use the installed agent without installing or updating it.
+  --force-capacity Launch despite an unavailable or failed capacity check.
   -- ARGS...       Pass the remaining arguments unchanged to the selected agent.
   update           Update only the launcher; do not launch or update an agent.
   doctor           Check the launcher, dependencies, configuration, agents,
                    PATH installation, and signed update source without making
                    changes. Warnings do not make the command fail.
-  status           Show resolved policy, context, paths, and agent availability
+  status           Show resolved policy, context, paths, agent inventory, and capacity
                    without update checks or other changes.
   --offline        With doctor, skip the signed update-source network check.
   --json           Emit doctor or status as one JSON object.
@@ -139,6 +140,7 @@ ORIGINAL_ARGS=("$@")
 
 SKIP_UPDATE=false
 SKIP_AGENT_UPDATE=false
+FORCE_CAPACITY=false
 UPDATE_ONLY=false
 DOCTOR_ONLY=false
 STATUS_ONLY=false
@@ -166,6 +168,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-agent-update)
             SKIP_AGENT_UPDATE=true
+            shift
+            ;;
+        --force-capacity)
+            FORCE_CAPACITY=true
             shift
             ;;
         update)
@@ -288,6 +294,10 @@ if $DOCTOR_JSON && ! $DOCTOR_ONLY && ! $STATUS_ONLY; then
 fi
 if $DOCTOR_OFFLINE && ! $DOCTOR_ONLY; then
     echo "Error: --offline is only valid with start doctor" >&2
+    exit 2
+fi
+if $FORCE_CAPACITY && { $UPDATE_ONLY || $DOCTOR_ONLY || $STATUS_ONLY; }; then
+    echo "Error: --force-capacity is only valid when launching an agent" >&2
     exit 2
 fi
 
@@ -476,6 +486,304 @@ json_escape() {
     printf '%s' "$value"
 }
 
+# Linux process state is the liveness source. A process is counted once by PID,
+# independently of whether it was started by Herdr, tmux, systemd, or a shell.
+# The alternate roots make fixture tests deterministic; config.sh is trusted
+# Bash, so these are deliberately not public CLI switches.
+PROC_ROOT="${START_SH_PROC_ROOT:-/proc}"
+CGROUP_ROOT="${START_SH_CGROUP_ROOT:-/sys/fs/cgroup}"
+INVENTORY_PIDS=()
+INVENTORY_AGENTS=()
+INVENTORY_UIDS=()
+INVENTORY_SESSION_IDS=()
+INVENTORY_SESSION_EPOCHS=()
+INVENTORY_COMPLETE=true
+INVENTORY_CLAUDE=0
+INVENTORY_CODEX=0
+
+collect_agent_inventory() {
+    local directory pid state uid key value agent arg0 arg1 mode comm
+    local -a argv=()
+    INVENTORY_PIDS=(); INVENTORY_AGENTS=(); INVENTORY_UIDS=(); INVENTORY_SESSION_IDS=(); INVENTORY_SESSION_EPOCHS=()
+    INVENTORY_COMPLETE=true; INVENTORY_CLAUDE=0; INVENTORY_CODEX=0
+    [[ -d "$PROC_ROOT" ]] || { INVENTORY_COMPLETE=false; return; }
+    for directory in "$PROC_ROOT"/[0-9]*; do
+        [[ -d "$directory" ]] || continue
+        pid=${directory##*/}
+        state=""; uid=""
+        if [[ ! -r "$directory/status" ]]; then
+            comm=""
+            [[ ! -r "$directory/comm" ]] || read -r comm < "$directory/comm"
+            case "$comm" in ''|claude|codex|node|nodejs|bun) INVENTORY_COMPLETE=false ;; esac
+            continue
+        fi
+        while IFS=$'\t' read -r key value; do
+            case "$key" in
+                State:) state=${value%%[[:space:]]*} ;;
+                Uid:) uid=${value%%[[:space:]]*} ;;
+            esac
+        done < "$directory/status"
+        case "$state" in
+            Z|X|x|I) continue ;;
+            '')
+                [[ -e "$directory" ]] || continue
+                comm=""
+                [[ ! -r "$directory/comm" ]] || read -r comm < "$directory/comm"
+                case "$comm" in ''|claude|codex|node|nodejs|bun) INVENTORY_COMPLETE=false ;; esac
+                continue
+                ;;
+        esac
+        argv=()
+        if [[ ! -r "$directory/cmdline" ]]; then
+            comm=""
+            [[ ! -r "$directory/comm" ]] || read -r comm < "$directory/comm"
+            case "$comm" in ''|claude|codex|node|nodejs|bun) INVENTORY_COMPLETE=false ;; esac
+            continue
+        fi
+        while IFS= read -r -d '' value; do argv+=("$value"); done < "$directory/cmdline"
+        if [[ ${#argv[@]} -eq 0 ]]; then
+            comm=""
+            [[ ! -r "$directory/comm" ]] || read -r comm < "$directory/comm"
+            case "$comm" in claude|codex|node|nodejs|bun) INVENTORY_COMPLETE=false ;; esac
+            continue
+        fi
+        arg0=${argv[0]##*/}
+        agent=""; mode=${argv[1]:-}
+        case "$arg0" in
+            claude|codex) agent=$arg0 ;;
+            node|nodejs|bun)
+                # npm-installed CLIs are Node entrypoints. Match their exact
+                # package entrypoint, never arbitrary arguments or helpers.
+                arg1=${argv[1]:-}
+                case "$arg1" in
+                    */@anthropic-ai/claude-code/cli.js) agent=claude; mode=${argv[2]:-} ;;
+                    */@openai/codex/bin/codex.js) agent=codex; mode=${argv[2]:-} ;;
+                esac
+                ;;
+        esac
+        [[ -n "$agent" ]] || continue
+        case "$agent:$mode" in
+            codex:app-server|codex:mcp-server|codex:completion|codex:login|codex:logout|codex:apply|codex:features|codex:debug|\
+            claude:mcp|claude:doctor|claude:install|claude:update|*:-h|*:--help|*:--version) continue ;;
+        esac
+        INVENTORY_PIDS+=("$pid")
+        INVENTORY_AGENTS+=("$agent")
+        INVENTORY_UIDS+=("${uid:-unknown}")
+        INVENTORY_SESSION_IDS+=("")
+        INVENTORY_SESSION_EPOCHS+=(0)
+        if [[ "$agent" == claude ]]; then
+            INVENTORY_CLAUDE=$((INVENTORY_CLAUDE + 1))
+        else
+            INVENTORY_CODEX=$((INVENTORY_CODEX + 1))
+        fi
+    done
+    enrich_inventory_from_ccdash
+}
+
+# CCDash's existing SessionStart/SessionEnd registry adds identity when it can
+# be proved to refer to the current process. It is not a liveness/count source:
+# ended sessions can leave stale records, and agents can run without hooks.
+enrich_inventory_from_ccdash() {
+    local session_dir=${START_SH_SESSION_DIR:-$HOME/.ccdash/sessions}
+    local boot="" ticks="" pid source session_id started epoch statline fields_start i process_start now
+    local -a files=("$session_dir"/*.json) fields=()
+    [[ -e "${files[0]}" ]] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    command -v getconf >/dev/null 2>&1 || return 0
+    [[ -r "$PROC_ROOT/stat" ]] || return 0
+    while read -r source value; do
+        [[ "$source" != btime ]] || { boot=$value; break; }
+    done < "$PROC_ROOT/stat"
+    ticks=$(getconf CLK_TCK 2>/dev/null || true)
+    [[ "$boot" =~ ^[0-9]+$ && "$ticks" =~ ^[0-9]+$ && "$ticks" -gt 0 ]] || return 0
+    now=$(date +%s)
+    while IFS=$'\t' read -r pid source session_id started; do
+        [[ "$pid" =~ ^[0-9]+$ && "$session_id" =~ ^[a-zA-Z0-9_.-]+$ ]] || continue
+        [[ "$source" == claude || "$source" == codex ]] || continue
+        epoch=$(date -u -d "$started" +%s 2>/dev/null || true)
+        [[ "$epoch" =~ ^[0-9]+$ ]] || continue
+        (( epoch <= now + 60 )) || continue
+        for i in "${!INVENTORY_PIDS[@]}"; do
+            [[ "${INVENTORY_PIDS[$i]}" == "$pid" && "${INVENTORY_AGENTS[$i]}" == "$source" ]] || continue
+            [[ -r "$PROC_ROOT/$pid/stat" ]] || break
+            IFS= read -r statline < "$PROC_ROOT/$pid/stat"
+            [[ "$statline" == *') '* ]] || break
+            fields_start=${statline##*) }
+            read -r -a fields <<< "$fields_start"
+            [[ "${fields[19]:-}" =~ ^[0-9]+$ ]] || break
+            process_start=$((boot + fields[19] / ticks))
+            # A new process at a reused PID starts after the old hook record.
+            (( process_start <= epoch )) || break
+            if (( epoch > INVENTORY_SESSION_EPOCHS[i] )); then
+                INVENTORY_SESSION_IDS[$i]=$session_id
+                INVENTORY_SESSION_EPOCHS[$i]=$epoch
+            fi
+            break
+        done
+    done < <(jq -r 'select((.pid | type) == "number" and (.source | type) == "string" and (.session_id | type) == "string" and (.started_at | type) == "string") | [.pid,.source,.session_id,.started_at] | @tsv' "${files[@]}" 2>/dev/null)
+}
+
+# Parse Linux CPU lists such as 0-3,8 without invoking Python or taskset.
+cpu_list_count() {
+    local list=$1 part first last total=0
+    local -a parts
+    IFS=, read -r -a parts <<< "$list"
+    for part in "${parts[@]}"; do
+        if [[ "$part" =~ ^[0-9]+$ ]]; then
+            total=$((total + 1))
+        elif [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            first=${BASH_REMATCH[1]}; last=${BASH_REMATCH[2]}
+            (( last >= first )) || return 1
+            total=$((total + last - first + 1))
+        else
+            return 1
+        fi
+    done
+    (( total > 0 )) || return 1
+    printf '%d' "$total"
+}
+
+CAPACITY_CPU_MILLICORES=0
+CAPACITY_CPU_LOAD_MILLICORES=0
+CAPACITY_MEMORY_AVAILABLE_BYTES=0
+CAPACITY_READY=false
+CAPACITY_REASON=metrics-unavailable
+CAPACITY_METRICS_COMPLETE=false
+
+collect_capacity() {
+    local key value unit path relative quota period limit current count cpus load whole fraction
+    local cpu_milli=0 memory_available=0 load_milli=-1 cpu_seen=false memory_seen=false cgroup_complete=false
+    collect_agent_inventory
+    CAPACITY_CPU_MILLICORES=0; CAPACITY_CPU_LOAD_MILLICORES=0; CAPACITY_MEMORY_AVAILABLE_BYTES=0
+    CAPACITY_READY=false; CAPACITY_REASON=metrics-unavailable
+    CAPACITY_METRICS_COMPLETE=false
+
+    if [[ -r "$PROC_ROOT/cpuinfo" ]]; then
+        count=$(grep -c '^processor[[:space:]]*:' "$PROC_ROOT/cpuinfo" || true)
+        if [[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]]; then
+            cpu_milli=$((count * 1000))
+            cpu_seen=true
+        fi
+    fi
+    if [[ -r "$PROC_ROOT/self/status" ]]; then
+        while IFS=$'\t' read -r key value; do
+            if [[ "$key" == Cpus_allowed_list: ]]; then
+                cpus=$(cpu_list_count "$value" 2>/dev/null || true)
+                if [[ "$cpus" =~ ^[0-9]+$ && "$cpus" -gt 0 ]] &&
+                    (( cpu_milli == 0 || cpus * 1000 < cpu_milli )); then
+                    cpu_milli=$((cpus * 1000))
+                    cpu_seen=true
+                fi
+                break
+            fi
+        done < "$PROC_ROOT/self/status"
+    fi
+    if [[ -r "$PROC_ROOT/meminfo" ]]; then
+        while read -r key value unit; do
+            if [[ "$key" == MemAvailable: && "$value" =~ ^[0-9]+$ ]]; then
+                memory_available=$((value * 1024))
+                memory_seen=true
+                break
+            fi
+        done < "$PROC_ROOT/meminfo"
+    fi
+    if [[ -r "$PROC_ROOT/loadavg" ]]; then
+        read -r load value < "$PROC_ROOT/loadavg"
+        if [[ "$load" =~ ^([0-9]{1,8})\.([0-9]{1,3})$ ]]; then
+            whole=${BASH_REMATCH[1]}
+            fraction=${BASH_REMATCH[2]}
+            fraction=${fraction}000
+            fraction=${fraction:0:3}
+            load_milli=$((10#$whole * 1000 + 10#$fraction))
+        fi
+    fi
+
+    # cgroup v2 constraints are hierarchical: an ancestor may be tighter than
+    # the leaf. Use the smallest available CPU quota, cpuset, and free memory.
+    if [[ -r "$PROC_ROOT/self/cgroup" && -r "$CGROUP_ROOT/cgroup.controllers" ]]; then
+        while IFS=: read -r key value relative; do
+            [[ "$key" == 0 && -z "$value" ]] && break
+        done < "$PROC_ROOT/self/cgroup"
+        if [[ "$key" == 0 && -z "$value" && "$relative" == /* && "$relative" != *..* && -d "$CGROUP_ROOT$relative" ]]; then
+            cgroup_complete=true
+            path="$CGROUP_ROOT$relative"
+            while [[ "$path" == "$CGROUP_ROOT" || "$path" == "$CGROUP_ROOT/"* ]]; do
+                if [[ -e "$path/cpu.max" && ! -r "$path/cpu.max" ]] ||
+                   [[ -e "$path/cpuset.cpus.effective" && ! -r "$path/cpuset.cpus.effective" ]] ||
+                   [[ -e "$path/memory.max" && ! -r "$path/memory.max" ]] ||
+                   [[ -e "$path/memory.current" && ! -r "$path/memory.current" ]]; then
+                    cgroup_complete=false
+                fi
+                if [[ -r "$path/cpu.max" ]]; then
+                    read -r quota period < "$path/cpu.max"
+                    if [[ "$quota" =~ ^[0-9]+$ && "$period" =~ ^[0-9]+$ && "$period" -gt 0 ]]; then
+                        limit=$((quota * 1000 / period))
+                        (( limit < cpu_milli )) && cpu_milli=$limit
+                    fi
+                fi
+                if [[ -r "$path/cpuset.cpus.effective" ]]; then
+                    read -r value < "$path/cpuset.cpus.effective"
+                    cpus=$(cpu_list_count "$value" 2>/dev/null || true)
+                    if [[ "$cpus" =~ ^[0-9]+$ && "$cpus" -gt 0 ]] && (( cpus * 1000 < cpu_milli )); then
+                        cpu_milli=$((cpus * 1000))
+                    fi
+                fi
+                if [[ -r "$path/memory.max" && -r "$path/memory.current" ]]; then
+                    read -r limit < "$path/memory.max"
+                    read -r current < "$path/memory.current"
+                    if [[ "$limit" =~ ^[0-9]+$ && "$current" =~ ^[0-9]+$ ]]; then
+                        value=$((limit - current))
+                        (( value < 0 )) && value=0
+                        (( value < memory_available )) && memory_available=$value
+                    fi
+                fi
+                [[ "$path" != "$CGROUP_ROOT" ]] || break
+                path=${path%/*}
+                [[ -n "$path" ]] || break
+            done
+        fi
+    fi
+    CAPACITY_CPU_MILLICORES=$cpu_milli
+    (( load_milli < 0 )) || CAPACITY_CPU_LOAD_MILLICORES=$load_milli
+    CAPACITY_MEMORY_AVAILABLE_BYTES=$memory_available
+    if ! $cpu_seen || ! $memory_seen || ! $cgroup_complete || (( load_milli < 0 )); then
+        CAPACITY_REASON=metrics-unavailable
+    elif ! $INVENTORY_COMPLETE; then
+        CAPACITY_REASON=inventory-unavailable
+    else
+        CAPACITY_METRICS_COMPLETE=true
+        local required_cpu=$(( load_milli + ${START_SH_AGENT_CPU_MILLICORES:-1000} + ${START_SH_CPU_RESERVE_MILLICORES:-0} ))
+        local required_memory=$(( (${START_SH_AGENT_MEMORY_MIB:-1024} + ${START_SH_MEMORY_RESERVE_MIB:-512}) * 1048576 ))
+        if (( required_cpu > cpu_milli )); then
+            CAPACITY_REASON=cpu
+        elif (( required_memory > memory_available )); then
+            CAPACITY_REASON=memory
+        else
+            CAPACITY_READY=true
+            CAPACITY_REASON=ready
+        fi
+    fi
+    if [[ "${START_SH_CAPACITY_POLICY:-enforce}" == off ]]; then
+        CAPACITY_READY=true
+        CAPACITY_REASON=disabled
+    fi
+}
+
+print_capacity_json() {
+    local i comma=""
+    printf '{"inventory":{"complete":%s,"counts":{"claude":%d,"codex":%d,"total":%d},"agents":[' \
+        "$INVENTORY_COMPLETE" "$INVENTORY_CLAUDE" "$INVENTORY_CODEX" "${#INVENTORY_PIDS[@]}"
+    for i in "${!INVENTORY_PIDS[@]}"; do
+        printf '%s{"pid":%d,"uid":"%s","agent":"%s"' "$comma" \
+            "${INVENTORY_PIDS[$i]}" "$(json_escape "${INVENTORY_UIDS[$i]}")" "${INVENTORY_AGENTS[$i]}"
+        [[ -z "${INVENTORY_SESSION_IDS[$i]}" ]] || printf ',"session_id":"%s"' "${INVENTORY_SESSION_IDS[$i]}"
+        printf '}'
+        comma=,
+    done
+    printf ']},"capacity":{"ready":%s,"reason":"%s","cpu_millicores":%d,"cpu_load_millicores":%d,"memory_available_bytes":%d}}' \
+        "$CAPACITY_READY" "$CAPACITY_REASON" "$CAPACITY_CPU_MILLICORES" "$CAPACITY_CPU_LOAD_MILLICORES" "$CAPACITY_MEMORY_AVAILABLE_BYTES"
+}
+
 inspect_file_trust() {
     local path=$1 owner mode group_digit other_digit
     FILE_TRUST_STATUS=pass
@@ -499,6 +807,7 @@ inspect_file_trust() {
 }
 
 require_valid_settings() {
+    local name value
     case "$START_SH_PROFILE" in
         safe|fleet|compatibility) ;;
         *) echo "Error: START_SH_PROFILE must be safe or fleet${PROFILE_FILE_ERROR:+ ($PROFILE_FILE_ERROR)}" >&2; exit 2 ;;
@@ -515,6 +824,26 @@ require_valid_settings() {
         always|daily|missing-only|never) ;;
         *) echo "Error: START_SH_AGENT_UPDATE_POLICY must be always, daily, missing-only, or never" >&2; exit 2 ;;
     esac
+    case "${START_SH_CAPACITY_POLICY:-enforce}" in
+        enforce|off) ;;
+        *) echo "Error: START_SH_CAPACITY_POLICY must be enforce or off" >&2; exit 2 ;;
+    esac
+    for name in START_SH_AGENT_CPU_MILLICORES START_SH_CPU_RESERVE_MILLICORES START_SH_AGENT_MEMORY_MIB START_SH_MEMORY_RESERVE_MIB; do
+        case "$name" in
+            START_SH_AGENT_CPU_MILLICORES) value=${START_SH_AGENT_CPU_MILLICORES:-1000} ;;
+            START_SH_CPU_RESERVE_MILLICORES) value=${START_SH_CPU_RESERVE_MILLICORES:-0} ;;
+            START_SH_AGENT_MEMORY_MIB) value=${START_SH_AGENT_MEMORY_MIB:-1024} ;;
+            START_SH_MEMORY_RESERVE_MIB) value=${START_SH_MEMORY_RESERVE_MIB:-512} ;;
+        esac
+        if [[ ! "$value" =~ ^(0|[1-9][0-9]{0,8})$ ]]; then
+            echo "Error: $name must be a nonnegative integer below one billion without leading zeros" >&2
+            exit 2
+        fi
+    done
+    if (( ${START_SH_AGENT_CPU_MILLICORES:-1000} == 0 || ${START_SH_AGENT_MEMORY_MIB:-1024} == 0 )); then
+        echo "Error: per-agent CPU and memory requirements must be positive" >&2
+        exit 2
+    fi
 }
 
 run_status() {
@@ -550,11 +879,12 @@ run_status() {
     [[ ! -d "$HOME/.claude/local/bin" ]] || export PATH="$HOME/.claude/local/bin:$PATH"
     command -v claude >/dev/null 2>&1 && claude_installed=true
     command -v codex >/dev/null 2>&1 && codex_installed=true
+    collect_capacity
 
     if $DOCTOR_JSON; then
         local agent_json=null
         [[ -z "$agent_value" ]] || agent_json="\"$(json_escape "$agent_value")\""
-        printf '{"schema":"harnessctl-status-v1","version":"%s","profile":"%s","permission_mode":"%s","launcher_update_policy":"%s","agent_update_policy":"%s","agent":%s,"agent_source":"%s","context":"%s","workdir":"%s","config_path":"%s","profile_path":"%s","launcher_path":"%s","update_url":"%s","installed":{"claude":%s,"codex":%s}}\n' \
+        printf '{"schema":"harnessctl-status-v1","version":"%s","profile":"%s","permission_mode":"%s","launcher_update_policy":"%s","agent_update_policy":"%s","agent":%s,"agent_source":"%s","context":"%s","workdir":"%s","config_path":"%s","profile_path":"%s","launcher_path":"%s","update_url":"%s","installed":{"claude":%s,"codex":%s},"host":' \
             "$(json_escape "$START_SH_VERSION")" \
             "$(json_escape "$START_SH_PROFILE")" \
             "$(json_escape "$START_SH_PERMISSION_MODE")" \
@@ -564,6 +894,8 @@ run_status() {
             "$(json_escape "$workdir")" "$(json_escape "$START_SH_CONFIG")" \
             "$(json_escape "$START_SH_PROFILE_PATH")" "$(json_escape "$SELF_PATH")" \
             "$(json_escape "$UPDATE_REPO_URL")" "$claude_installed" "$codex_installed"
+        print_capacity_json
+        printf '}\n'
     else
         printf 'start status v%s\n' "$START_SH_VERSION"
         printf '%-23s %s\n' 'Profile' "$START_SH_PROFILE"
@@ -578,6 +910,8 @@ run_status() {
         printf '%-23s %s\n' 'Launcher' "$SELF_PATH"
         printf '%-23s %s\n' 'Update source' "$UPDATE_REPO_URL"
         printf '%-23s claude=%s codex=%s\n' 'Installed agents' "$claude_installed" "$codex_installed"
+        printf '%-23s claude=%d codex=%d total=%d%s\n' 'Running agents' "$INVENTORY_CLAUDE" "$INVENTORY_CODEX" "${#INVENTORY_PIDS[@]}" "$( $INVENTORY_COMPLETE || printf ' (incomplete)' )"
+        printf '%-23s %s (%s; load %d/%d mCPU, %d MiB available)\n' 'N+1 launch capacity' "$CAPACITY_READY" "$CAPACITY_REASON" "$CAPACITY_CPU_LOAD_MILLICORES" "$CAPACITY_CPU_MILLICORES" "$((CAPACITY_MEMORY_AVAILABLE_BYTES / 1048576))"
     fi
 }
 
@@ -1239,6 +1573,16 @@ resolve_resume_session() {
 
 resolve_resume_session
 resolve_agent
+collect_capacity
+if ! $CAPACITY_READY && ! $FORCE_CAPACITY; then
+    printf 'Error: N+1 capacity check failed (%s): %d running agents, %d mCPU, %d MiB available. Use --force-capacity to override.\n' \
+        "$CAPACITY_REASON" "${#INVENTORY_PIDS[@]}" "$CAPACITY_CPU_MILLICORES" \
+        "$((CAPACITY_MEMORY_AVAILABLE_BYTES / 1048576))" >&2
+    exit 1
+fi
+if ! $CAPACITY_READY && $FORCE_CAPACITY; then
+    printf 'Warning: overriding N+1 capacity check (%s).\n' "$CAPACITY_REASON" >&2
+fi
 check_and_update_agent
 set_agent_argv
 

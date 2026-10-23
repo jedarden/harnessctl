@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+export START_SH_CAPACITY_POLICY=off # Host load is outside this tmux smoke test.
 
 # Run the real launcher against a disposable HOME and a private tmux server.
 # Agent doubles keep this a local smoke test while preserving the runtime

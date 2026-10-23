@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+export START_SH_CAPACITY_POLICY=off # Dispatch tests use separate capacity fixtures.
 
 # Exercise the user-facing `start` command through its PATH-installed symlink.
 # The disposable HOME and command doubles make the test independent of a live
