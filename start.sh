@@ -17,7 +17,7 @@
 # Releases are signed by OpenBao Transit and distributed through the read-only
 # GitHub mirror. Install a deployed copy with install.sh; update it with
 # `start update`. Bootstrap's launcher is a compatibility snapshot.
-START_SH_VERSION="1.6.4"
+START_SH_VERSION="1.6.5"
 REPO_URL="https://raw.githubusercontent.com/jedarden/harnessctl/main"
 ARTIFACT_MANIFEST_FILE="artifact-manifest.txt"
 ARTIFACT_SIGNATURE_FILE="artifact-manifest.sig"
