@@ -76,8 +76,10 @@ CLI agent and workdir options override both.
 | `START_SH_PERMISSION_MODE` | `default`, `bypass`; from profile | Agent approval/sandbox policy |
 | `START_SH_UPDATE_POLICY` | `always`, `daily`, `never`; from profile | Automatic launcher check cadence |
 | `START_SH_AGENT_UPDATE_POLICY` | `always`, `daily`, `missing-only`, `never`; from profile | Agent install/update cadence |
-| `START_SH_CLAUDE_MODEL` | `sonnet` | Claude model argument |
-| `START_SH_CODEX_MODEL` | unset | Optional Codex model argument |
+| `START_SH_CLAUDE_MODEL` | `claude-opus-5-5` | Claude `--model`; empty omits the flag |
+| `START_SH_CLAUDE_EFFORT` | `high` | Claude `--effort`; empty omits the flag |
+| `START_SH_CODEX_MODEL` | `gpt-6.1-sol` | Codex `--model`; empty omits the flag |
+| `START_SH_CODEX_EFFORT` | `high` | Codex `model_reasoning_effort`; empty omits the override |
 | `START_SH_WORKDIR` | caller's physical directory | Default launch directory |
 | `START_SH_TMUX_CONF` | `~/.tmux/tmux.conf` for a default install | tmux config path |
 | `START_SH_UPDATE_URL` | signed GitHub mirror | Alternate signed artifact root |
@@ -135,6 +137,13 @@ START_SH_CODEX_MODEL='custom-codex-model'
 EOF
 chmod 600 ~/.config/harnessctl/config.sh
 ```
+
+`start` always passes these defaults, so they take precedence over Claude Code's
+saved `/model` and `effortLevel` settings and over the `model` and
+`model_reasoning_effort` keys in `~/.codex/config.toml`. Set a variable to an
+empty value to defer to that agent configuration instead. For one launch, pass
+the agent's own flag after `--`, for example `start claude -- --effort low` or
+`start codex -- --model gpt-6-sol`.
 
 ## Update semantics
 

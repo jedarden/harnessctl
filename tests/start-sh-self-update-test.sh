@@ -194,9 +194,13 @@ for launcher in "$START_SH"; do
         "$launcher" \
         'tmux history limit drifted'
     assert_file_contains \
-        'AGENT_ARGV+=(--model "${START_SH_CLAUDE_MODEL:-sonnet}")' \
+        'START_SH_CLAUDE_MODEL="${START_SH_CLAUDE_MODEL-claude-opus-5-5}"' \
         "$launcher" \
         'Claude model pin drifted'
+    assert_file_contains \
+        'START_SH_CODEX_MODEL="${START_SH_CODEX_MODEL-gpt-6.1-sol}"' \
+        "$launcher" \
+        'Codex model pin drifted'
     assert_file_not_contains \
         'set -g history-limit 10000' \
         "$launcher" \
@@ -205,7 +209,7 @@ done
 
 echo 'Checking successful authenticated update and atomic replacement...'
 run_case success success
-assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model sonnet' "$CASE_OUTPUT" \
+assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model claude-opus-5-5 --effort high' "$CASE_OUTPUT" \
     'successful update did not re-exec the fetched launcher with original flags'
 cmp -s "$LAUNCHER" "$PAYLOAD_FILE" || fail 'successful update did not install the fetched payload'
 [[ -x "$LAUNCHER" ]] || fail 'successful update did not preserve launcher executability'
@@ -237,7 +241,7 @@ run_case version-unavailable version-unavailable
 assert_unchanged 'unavailable release metadata damaged the launcher'
 assert_contains 'could not download artifact-manifest.txt from the configured source' "$CASE_OUTPUT" \
     'unavailable release metadata did not report its failure stage'
-assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model sonnet' "$CASE_OUTPUT" \
+assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model claude-opus-5-5 --effort high' "$CASE_OUTPUT" \
     'launcher did not continue with the installed agent after metadata became unavailable'
 payload_fetches=$(grep -Ec '/start\.sh$' "$CURL_LOG" || true)
 [[ "$payload_fetches" -eq 0 ]] || fail 'unavailable metadata unexpectedly fetched a launcher payload'
@@ -271,7 +275,7 @@ run_case payload-unavailable payload-unavailable
 assert_unchanged 'unavailable launcher payload damaged the launcher'
 assert_contains 'could not download start.sh from the configured update source' "$CASE_OUTPUT" \
     'unavailable launcher payload did not report its failure stage'
-assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model sonnet' "$CASE_OUTPUT" \
+assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model claude-opus-5-5 --effort high' "$CASE_OUTPUT" \
     'launcher did not continue with the installed agent after payload fetch failure'
 payload_fetches=$(grep -Ec '/start\.sh$' "$CURL_LOG" || true)
 [[ "$payload_fetches" -eq 1 ]] || fail 'unavailable payload did not fetch the launcher exactly once'
@@ -279,7 +283,7 @@ assert_no_update_temps
 
 run_case payload-interrupted payload-interrupted
 assert_unchanged 'interrupted launcher payload damaged the launcher'
-assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model sonnet' "$CASE_OUTPUT" \
+assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model claude-opus-5-5 --effort high' "$CASE_OUTPUT" \
     'launcher did not remain usable after an interrupted payload download'
 assert_no_update_temps
 
@@ -287,7 +291,7 @@ run_case payload-empty payload-empty
 assert_unchanged 'empty launcher payload damaged the launcher'
 assert_contains 'downloaded start.sh is empty' "$CASE_OUTPUT" \
     'empty launcher payload did not report its failure stage'
-assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model sonnet' "$CASE_OUTPUT" \
+assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model claude-opus-5-5 --effort high' "$CASE_OUTPUT" \
     'launcher did not remain usable after an empty payload'
 assert_no_update_temps
 
@@ -307,7 +311,7 @@ run_case payload-malformed payload-malformed
 assert_unchanged 'syntax-invalid launcher payload damaged the launcher'
 assert_contains 'does not match the signed release hash and version' "$CASE_OUTPUT" \
     'malformed payload failure was not reported'
-assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model sonnet' "$CASE_OUTPUT" \
+assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model claude-opus-5-5 --effort high' "$CASE_OUTPUT" \
     'launcher did not remain usable after a syntax-gate failure'
 [[ ! -f "$MV_LOG" ]] || fail 'syntax-invalid payload reached the replacement step'
 assert_no_update_temps
@@ -333,7 +337,7 @@ output=$(
 assert_unchanged 'failed atomic replacement damaged the launcher'
 assert_contains 'could not install fetched start.sh, keeping current version' "$output" \
     'replacement failure was not reported'
-assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model sonnet' "$output" \
+assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model claude-opus-5-5 --effort high' "$output" \
     'launcher did not remain usable after replacement failure'
 assert_no_update_temps
 
@@ -360,7 +364,7 @@ output=$(
 assert_unchanged 'unusable OpenSSL damaged the launcher'
 assert_contains 'openssl exists but cannot run; check its shared libraries' "$output" \
     'unusable OpenSSL did not produce an actionable error'
-assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model sonnet' "$output" \
+assert_contains 'AGENT_LAUNCHED --dangerously-skip-permissions --model claude-opus-5-5 --effort high' "$output" \
     'launcher did not continue after the OpenSSL update-check failure'
 assert_no_update_temps
 

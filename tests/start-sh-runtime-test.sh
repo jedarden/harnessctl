@@ -133,9 +133,9 @@ run_tmux_case() {
     local agent=$1
     local resume_id=$2 expected_args
     if [[ "$agent" == claude ]]; then
-        expected_args="--dangerously-skip-permissions --model sonnet --resume $resume_id"
+        expected_args="--dangerously-skip-permissions --model claude-opus-5-5 --effort high --resume $resume_id"
     else
-        expected_args="resume --dangerously-bypass-approvals-and-sandbox $resume_id"
+        expected_args="resume --dangerously-bypass-approvals-and-sandbox --model gpt-6.1-sol -c model_reasoning_effort=\"high\" $resume_id"
     fi
 
     setup_case "$agent"

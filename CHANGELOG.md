@@ -3,6 +3,18 @@
 User-visible changes are recorded here. Release archives under
 `releases/vVERSION/` remain the immutable record of exact shipped artifacts.
 
+## 1.7.0 - 2026-11-01
+
+- Default `start claude` to `claude-opus-5-5` at `high` effort, replacing
+  `sonnet`, and `start codex` to `gpt-6.1-sol` at `high` effort, replacing
+  whatever `~/.codex/config.toml` selected.
+- Add `START_SH_CLAUDE_EFFORT` and `START_SH_CODEX_EFFORT`.
+- An explicitly empty model or effort variable now omits the flag so the agent's
+  own configuration applies. An empty `START_SH_CLAUDE_MODEL` previously meant
+  the default model.
+- Let `start codex -- --model NAME` replace the default model, because Codex
+  rejects a repeated `--model`.
+
 ## 1.6.0 - 2026-10-07
 
 - Add explicit `safe` and `fleet` profiles. Fresh installs choose safe defaults;

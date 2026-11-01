@@ -17,7 +17,7 @@
 # Releases are signed by OpenBao Transit and distributed through the read-only
 # GitHub mirror. Install a deployed copy with install.sh; update it with
 # `start update`. Bootstrap's launcher is a compatibility snapshot.
-START_SH_VERSION="1.6.6"
+START_SH_VERSION="1.7.0"
 REPO_URL="https://raw.githubusercontent.com/jedarden/harnessctl/main"
 ARTIFACT_MANIFEST_FILE="artifact-manifest.txt"
 ARTIFACT_SIGNATURE_FILE="artifact-manifest.sig"
@@ -92,6 +92,13 @@ case "$START_SH_PROFILE" in
         ;;
 esac
 START_SH_STATE_DIR="${START_SH_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/harnessctl}"
+
+# Launch defaults. Unset takes the value below; an explicitly empty value omits
+# the flag so the agent's own configuration applies.
+START_SH_CLAUDE_MODEL="${START_SH_CLAUDE_MODEL-claude-opus-5-5}"
+START_SH_CLAUDE_EFFORT="${START_SH_CLAUDE_EFFORT-high}"
+START_SH_CODEX_MODEL="${START_SH_CODEX_MODEL-gpt-6.1-sol}"
+START_SH_CODEX_EFFORT="${START_SH_CODEX_EFFORT-high}"
 
 usage() {
     cat <<'USAGE'
@@ -828,6 +835,14 @@ require_valid_settings() {
         enforce|off) ;;
         *) echo "Error: START_SH_CAPACITY_POLICY must be enforce or off" >&2; exit 2 ;;
     esac
+    # The agent owns the set of levels. This only keeps the value one inert
+    # word, because the Codex value is interpolated into a TOML string.
+    for name in START_SH_CLAUDE_EFFORT START_SH_CODEX_EFFORT; do
+        if [[ ! "${!name}" =~ ^[a-z]*$ ]]; then
+            echo "Error: $name must be empty or one lowercase word" >&2
+            exit 2
+        fi
+    done
     for name in START_SH_AGENT_CPU_MILLICORES START_SH_CPU_RESERVE_MILLICORES START_SH_AGENT_MEMORY_MIB START_SH_MEMORY_RESERVE_MIB; do
         case "$name" in
             START_SH_AGENT_CPU_MILLICORES) value=${START_SH_AGENT_CPU_MILLICORES:-1000} ;;
@@ -1515,6 +1530,19 @@ check_and_update_agent() {
 # Launch argv for the selected agent. The effective permission mode comes from
 # the chosen profile or an explicit override; fleet/compatibility mode retains
 # the historical bypass flags while safe mode keeps agent protections enabled.
+# Pass-through arguments follow the defaults, so a later Claude --effort or
+# --model and a later Codex -c win. Codex rejects a repeated --model outright,
+# so its default yields to an explicit one instead.
+codex_extra_args_set_model() {
+    local arg
+    for arg in "${AGENT_EXTRA_ARGS[@]}"; do
+        case "$arg" in
+            --model|--model=*|-m|-m?*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
 set_agent_argv() {
     local permission_mode="$START_SH_PERMISSION_MODE"
     case "$permission_mode" in
@@ -1525,7 +1553,8 @@ set_agent_argv() {
         claude)
             AGENT_ARGV=(claude)
             [[ "$permission_mode" != bypass ]] || AGENT_ARGV+=(--dangerously-skip-permissions)
-            AGENT_ARGV+=(--model "${START_SH_CLAUDE_MODEL:-sonnet}")
+            [[ -z "$START_SH_CLAUDE_MODEL" ]] || AGENT_ARGV+=(--model "$START_SH_CLAUDE_MODEL")
+            [[ -z "$START_SH_CLAUDE_EFFORT" ]] || AGENT_ARGV+=(--effort "$START_SH_CLAUDE_EFFORT")
             AGENT_ARGV+=("${AGENT_EXTRA_ARGS[@]}")
             if [[ -n "$RESUME_SESSION" ]]; then
                 AGENT_ARGV+=(--resume "$RESUME_SESSION")
@@ -1538,7 +1567,10 @@ set_agent_argv() {
                 AGENT_ARGV=(codex)
             fi
             [[ "$permission_mode" != bypass ]] || AGENT_ARGV+=(--dangerously-bypass-approvals-and-sandbox)
-            [[ -z "${START_SH_CODEX_MODEL:-}" ]] || AGENT_ARGV+=(--model "$START_SH_CODEX_MODEL")
+            if [[ -n "$START_SH_CODEX_MODEL" ]] && ! codex_extra_args_set_model; then
+                AGENT_ARGV+=(--model "$START_SH_CODEX_MODEL")
+            fi
+            [[ -z "$START_SH_CODEX_EFFORT" ]] || AGENT_ARGV+=(-c "model_reasoning_effort=\"$START_SH_CODEX_EFFORT\"")
             AGENT_ARGV+=("${AGENT_EXTRA_ARGS[@]}")
             [[ -z "$RESUME_SESSION" ]] || AGENT_ARGV+=("$RESUME_SESSION")
             ;;

@@ -188,7 +188,7 @@ assert_file_contains \
     'tmux <-f> <'"$CASE_HOME"'/.tmux/tmux.conf> <new-session> <-d> <-s> <alpha> <-c> <'"$CALLER_DIR"'>' \
     "$FAKE_TMUX_LOG" 'default did not create a tmux session in the caller directory'
 assert_file_contains \
-    'unset CLAUDECODE && exec claude --dangerously-skip-permissions --model sonnet' \
+    'unset CLAUDECODE && exec claude --dangerously-skip-permissions --model claude-opus-5-5 --effort high' \
     "$FAKE_TMUX_LOG" 'default did not send the Claude command to tmux'
 assert_not_contains 'exec codex' "$(<"$FAKE_TMUX_LOG")" \
     'default unexpectedly dispatched Codex'
@@ -210,7 +210,7 @@ run_start false codex --no-update
 assert_contains 'Creating tmux session: alpha (agent: codex)' \
     "$CASE_OUTPUT" 'positional codex did not select Codex'
 assert_file_contains \
-    'unset CLAUDECODE && exec codex --dangerously-bypass-approvals-and-sandbox' \
+    'unset CLAUDECODE && exec codex --dangerously-bypass-approvals-and-sandbox --model gpt-6.1-sol -c model_reasoning_effort=\"high\"' \
     "$FAKE_TMUX_LOG" 'positional codex was not sent to tmux'
 assert_not_contains 'exec claude' "$(<"$FAKE_TMUX_LOG")" \
     'positional codex unexpectedly dispatched Claude'
@@ -221,7 +221,7 @@ run_start false codex --resume 'thread name; still-one-argument' --no-update
 assert_contains 'Creating tmux session: alpha (agent: codex)' \
     "$CASE_OUTPUT" 'resumed Codex session did not select Codex'
 assert_file_contains \
-    'unset CLAUDECODE && exec codex resume --dangerously-bypass-approvals-and-sandbox thread\ name\;\ still-one-argument' \
+    'unset CLAUDECODE && exec codex resume --dangerously-bypass-approvals-and-sandbox --model gpt-6.1-sol -c model_reasoning_effort=\"high\" thread\ name\;\ still-one-argument' \
     "$FAKE_TMUX_LOG" 'Codex resume value was not safely sent through tmux'
 
 echo 'Checking direct agent execution inside a herdr pane...'
@@ -230,7 +230,7 @@ run_start true codex --resume 019dbf76-c928-76b3-84b9-6d8b14fdb99c --no-update
 assert_contains 'Detected herdr pane unknown - skipping nested tmux session.' \
     "$CASE_OUTPUT" 'herdr pane was not detected'
 assert_contains \
-    'codex <resume> <--dangerously-bypass-approvals-and-sandbox> <019dbf76-c928-76b3-84b9-6d8b14fdb99c>' \
+    'codex <resume> <--dangerously-bypass-approvals-and-sandbox> <--model> <gpt-6.1-sol> <-c> <model_reasoning_effort="high"> <019dbf76-c928-76b3-84b9-6d8b14fdb99c>' \
     "$(<"$FAKE_AGENT_LOG")" 'Codex resume command was not executed directly'
 assert_file_not_exists "$FAKE_TMUX_LOG" \
     'herdr dispatch unexpectedly invoked tmux'
@@ -238,7 +238,7 @@ assert_file_not_exists "$FAKE_TMUX_LOG" \
 setup_case claude-herdr
 run_start true claude --resume 4dcb6804-7929-4ae4-92c6-cb0cc43b8290 --no-update
 assert_contains \
-    'claude <--dangerously-skip-permissions> <--model> <sonnet> <--resume> <4dcb6804-7929-4ae4-92c6-cb0cc43b8290>' \
+    'claude <--dangerously-skip-permissions> <--model> <claude-opus-5-5> <--effort> <high> <--resume> <4dcb6804-7929-4ae4-92c6-cb0cc43b8290>' \
     "$(<"$FAKE_AGENT_LOG")" 'Claude resume command was not executed directly'
 assert_file_not_exists "$FAKE_TMUX_LOG" \
     'resumed Claude herdr dispatch unexpectedly invoked tmux'
@@ -250,7 +250,7 @@ mkdir -p "$EXPLICIT_DIR"
 run_start false codex resume 'thread name; still-one-argument' -C 'selected work' \
     --no-update --no-agent-update -- --search 'two words'
 assert_file_contains \
-    'unset CLAUDECODE && exec codex resume --dangerously-bypass-approvals-and-sandbox --search two\ words thread\ name\;\ still-one-argument' \
+    'unset CLAUDECODE && exec codex resume --dangerously-bypass-approvals-and-sandbox --model gpt-6.1-sol -c model_reasoning_effort=\"high\" --search two\ words thread\ name\;\ still-one-argument' \
     "$FAKE_TMUX_LOG" 'positional Codex resume or pass-through arguments changed through tmux'
 assert_file_contains \
     'tmux <-f> <'"$CASE_HOME"'/.tmux/tmux.conf> <new-session> <-d> <-s> <alpha> <-c> <'"$EXPLICIT_DIR"'>' \
@@ -260,7 +260,7 @@ setup_case claude-positional-resume-herdr
 printf -v RESUME_ID 'thread name; $(touch %q)' "$CASE_ROOT/injected"
 run_start true claude resume "$RESUME_ID" --no-update --no-agent-update
 assert_contains \
-    "claude <--dangerously-skip-permissions> <--model> <sonnet> <--resume> <$RESUME_ID>" \
+    "claude <--dangerously-skip-permissions> <--model> <claude-opus-5-5> <--effort> <high> <--resume> <$RESUME_ID>" \
     "$(<"$FAKE_AGENT_LOG")" 'positional Claude resume ID changed or split into multiple arguments'
 assert_file_not_exists "$CASE_ROOT/injected" 'positional resume ID was evaluated'
 assert_file_not_exists "$FAKE_TMUX_LOG" 'positional Herdr resume unexpectedly invoked tmux'
@@ -268,13 +268,13 @@ assert_file_not_exists "$FAKE_TMUX_LOG" 'positional Herdr resume unexpectedly in
 setup_case default-positional-resume
 run_start true resume default-session --no-update --no-agent-update
 assert_contains \
-    'claude <--dangerously-skip-permissions> <--model> <sonnet> <--resume> <default-session>' \
+    'claude <--dangerously-skip-permissions> <--model> <claude-opus-5-5> <--effort> <high> <--resume> <default-session>' \
     "$(<"$FAKE_AGENT_LOG")" 'positional resume without an agent did not use the normal default'
 
 setup_case flag-agent-positional-resume
 run_start true --agent codex resume codex-session --no-update --no-agent-update
 assert_contains \
-    'codex <resume> <--dangerously-bypass-approvals-and-sandbox> <codex-session>' \
+    'codex <resume> <--dangerously-bypass-approvals-and-sandbox> <--model> <gpt-6.1-sol> <-c> <model_reasoning_effort="high"> <codex-session>' \
     "$(<"$FAKE_AGENT_LOG")" 'positional resume did not honor --agent'
 
 echo 'Checking agent argument pass-through remains inert...'
@@ -287,13 +287,13 @@ output=$(
     start codex --no-update --no-agent-update -- --search 'value; $(touch /tmp/nope)' 2>&1
 )
 assert_contains \
-    'codex <--dangerously-bypass-approvals-and-sandbox> <--search> <value; $(touch /tmp/nope)>' \
+    'codex <--dangerously-bypass-approvals-and-sandbox> <--model> <gpt-6.1-sol> <-c> <model_reasoning_effort="high"> <--search> <value; $(touch /tmp/nope)>' \
     "$(<"$FAKE_AGENT_LOG")" 'direct pass-through arguments changed or were evaluated'
 
 setup_case passthrough-tmux
 run_start false claude --no-update --no-agent-update -- --permission-mode plan 'two words'
 assert_file_contains \
-    'unset CLAUDECODE && exec claude --dangerously-skip-permissions --model sonnet --permission-mode plan two\ words' \
+    'unset CLAUDECODE && exec claude --dangerously-skip-permissions --model claude-opus-5-5 --effort high --permission-mode plan two\ words' \
     "$FAKE_TMUX_LOG" 'tmux pass-through arguments were not shell-quoted'
 
 echo 'Checking Herdr last-session handoff...'
@@ -306,7 +306,7 @@ output=$(
     start resume last --no-update --no-agent-update 2>&1
 )
 assert_contains \
-    'codex <resume> <--dangerously-bypass-approvals-and-sandbox> <last thread; inert>' \
+    'codex <resume> <--dangerously-bypass-approvals-and-sandbox> <--model> <gpt-6.1-sol> <-c> <model_reasoning_effort="high"> <last thread; inert>' \
     "$(<"$FAKE_AGENT_LOG")" 'Herdr resume metadata did not select and resume Codex'
 
 setup_case resume-last-missing
